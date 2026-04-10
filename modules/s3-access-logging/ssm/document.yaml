@@ -1,0 +1,116 @@
+schemaVersion: "0.3"
+description: "Wrapper for AWS-ConfigureS3BucketLogging with inherent and operational exclusion support"
+assumeRole: "{{ AutomationAssumeRole }}"
+parameters:
+  BucketName:
+    type: String
+    description: "The S3 bucket name to enable access logging on"
+  AutomationAssumeRole:
+    type: String
+    description: "IAM role ARN for SSM to assume"
+  ExcludedResourceIds:
+    type: String
+    default: "[]"
+    description: "JSON-encoded list of resource IDs to exempt from remediation"
+  LogDestinationBucket:
+    type: String
+    description: "The S3 bucket that receives access logs (inherently excluded from remediation)"
+  GrantedPermission:
+    type: String
+    default: "WRITE"
+    description: "Permission granted to the grantee on the target bucket"
+  GranteeType:
+    type: String
+    default: "Group"
+    description: "Type of grantee (Group or CanonicalUser)"
+  GranteeUri:
+    type: String
+    default: "http://acs.amazonaws.com/groups/s3/LogDelivery"
+    description: "URI of the grantee group for log delivery"
+  TargetBucket:
+    type: String
+    description: "Destination bucket for access logs"
+  TargetPrefix:
+    type: String
+    default: ""
+    description: "Prefix for log objects in the destination bucket"
+
+mainSteps:
+  - name: CheckExclusion
+    action: aws:executeScript
+    inputs:
+      Runtime: python3.11
+      Handler: handler
+      Script: |
+        import json
+
+        def handler(events, context):
+            resource_id = events["BucketName"]
+            log_destination = events["LogDestinationBucket"]
+
+            # Inherent exclusion: the log destination bucket must never have
+            # logging enabled on itself — doing so creates an infinite loop
+            # of log deliveries that grows exponentially and explodes costs.
+            if resource_id == log_destination:
+                return {
+                    "action": "skip",
+                    "reason": f"{resource_id} is the log destination bucket (inherent exclusion — enabling logging on it would create an infinite loop)"
+                }
+
+            # Operational exclusion: operator-specified resource IDs.
+            raw = events.get("ExcludedResourceIds") or "[]"
+            try:
+                excluded = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                excluded = []
+            if resource_id in excluded:
+                return {
+                    "action": "skip",
+                    "reason": f"{resource_id} is in the operator exclusion list"
+                }
+
+            return {"action": "remediate"}
+      InputPayload:
+        BucketName: "{{ BucketName }}"
+        LogDestinationBucket: "{{ LogDestinationBucket }}"
+        ExcludedResourceIds: "{{ ExcludedResourceIds }}"
+    outputs:
+      - Name: action
+        Selector: $.Payload.action
+        Type: String
+
+  - name: BranchOnExclusion
+    action: aws:branch
+    inputs:
+      Choices:
+        - NextStep: ExitSkipped
+          Variable: "{{ CheckExclusion.action }}"
+          StringEquals: "skip"
+      Default: InvokeRemediation
+
+  - name: InvokeRemediation
+    action: aws:executeAutomation
+    inputs:
+      DocumentName: AWS-ConfigureS3BucketLogging
+      RuntimeParameters:
+        AutomationAssumeRole:
+          - "{{ AutomationAssumeRole }}"
+        BucketName:
+          - "{{ BucketName }}"
+        GrantedPermission:
+          - "{{ GrantedPermission }}"
+        GranteeType:
+          - "{{ GranteeType }}"
+        GranteeUri:
+          - "{{ GranteeUri }}"
+        TargetBucket:
+          - "{{ TargetBucket }}"
+        TargetPrefix:
+          - "{{ TargetPrefix }}"
+    isEnd: true
+
+  - name: ExitSkipped
+    action: aws:sleep
+    inputs:
+      Duration: PT1S
+    isEnd: true
