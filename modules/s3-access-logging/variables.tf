@@ -43,19 +43,24 @@ variable "config_rule_input_parameters" {
 
 variable "excluded_resource_ids" {
   type        = list(string)
-  description = "Resource IDs to exempt from remediation. Honored in-document by Tier 1 modules; Tier 2 modules delegate exclusion to the operator via aws configservice put-remediation-exceptions."
+  description = "Resource IDs to exempt from remediation. Honored in-document by this Tier 1 module — the SSM wrapper checks this list before invoking PutBucketLogging."
   default     = []
 }
 
-# --- Module-specific inputs ---
+# Module-specific inputs
 
 variable "log_destination_bucket" {
   type        = string
-  description = "Name of the S3 bucket that receives server access logs. This bucket is inherently excluded from remediation to prevent an infinite logging loop."
+  description = "Name of the S3 bucket that receives server access logs. This bucket must already exist and have the appropriate bucket policy allowing the S3 logging service to write objects. Ask your platform team if you do not know which bucket to use. This bucket is automatically excluded from remediation (it must not log to itself)."
+
+  validation {
+    condition     = length(var.log_destination_bucket) >= 3 && length(var.log_destination_bucket) <= 63
+    error_message = "log_destination_bucket must be a valid S3 bucket name (3-63 characters)."
+  }
 }
 
 variable "log_destination_prefix" {
   type        = string
-  description = "Prefix for log objects in the destination bucket. Leave empty for no prefix."
+  description = "Optional key prefix for log objects written to the destination bucket. For example, 's3-access-logs/' groups all S3 access logs under a common prefix. Leave empty to write logs at the bucket root."
   default     = ""
 }

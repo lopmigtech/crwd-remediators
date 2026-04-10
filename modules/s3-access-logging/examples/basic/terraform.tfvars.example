@@ -1,0 +1,36 @@
+# terraform.tfvars.example
+# Copy this file to terraform.tfvars and fill in your values.
+# Do NOT commit terraform.tfvars — it contains environment-specific values.
+
+# Required: prefix for all resource names created by this module.
+# Use something short and meaningful, like your project or team name.
+# Example: "security", "platform", "infosec"
+name_prefix = "my-project"
+
+# Required: the S3 bucket that receives server access logs for all other buckets.
+# This bucket must already exist before deploying this module.
+# Ask your platform team if you don't know which bucket to use.
+# IMPORTANT: this bucket is automatically excluded from remediation — enabling
+# logging on the destination bucket itself would create an infinite delivery loop.
+log_destination_bucket = "my-central-logging-bucket"
+
+# Optional: prefix for log objects in the destination bucket.
+# Using a prefix helps organize logs from multiple sources in the same bucket.
+# Example: "s3-access-logs/" groups all S3 access logs under a common prefix.
+# Leave as empty string to write logs at the bucket root.
+log_destination_prefix = "s3-access-logs/"
+
+# Safety switch: set to true ONLY after reviewing the non-compliance list.
+# On first deploy, leave this as false. After deploying, run:
+#   terraform output non_compliant_resources_cli_command
+# Copy and run the output command to see which buckets are flagged.
+# Review the list carefully, then set this to true and re-apply to enable
+# automatic remediation.
+automatic_remediation = false
+
+# Optional: bucket names to exempt from remediation.
+# Add any bucket names that should never have access logging enabled.
+# The log_destination_bucket is already excluded automatically — you do not
+# need to add it here.
+# Example: excluded_resource_ids = ["my-special-bucket", "another-exempt-bucket"]
+excluded_resource_ids = []

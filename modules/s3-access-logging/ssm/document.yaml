@@ -1,70 +1,73 @@
 schemaVersion: "0.3"
-description: "Enable S3 server access logging with inherent and operational exclusion support. Uses direct S3 API (compatible with modern Bucket Owner Enforced buckets — no ACL grants needed)."
+description: "Enable S3 server access logging on a bucket using a direct PutBucketLogging API call. Checks both inherent exclusions (the log destination bucket must not log to itself) and operator-defined exclusions before remediating."
 assumeRole: "{{ AutomationAssumeRole }}"
 parameters:
   BucketName:
     type: String
-    description: "The S3 bucket name to enable access logging on (injected by Config via RESOURCE_ID)"
+    description: "The name of the S3 bucket to enable access logging on (injected by Config at runtime)"
+  TargetBucket:
+    type: String
+    description: "The S3 bucket that receives the access logs"
+  TargetPrefix:
+    type: String
+    description: "Key prefix for log objects in the destination bucket (can be empty string)"
+    default: ""
+  ExcludedResourceIds:
+    type: String
+    description: "Comma-separated list of bucket names to exempt from remediation (operator-defined). Pass a single space if the list is empty."
+    default: " "
+  InherentExclusionBucket:
+    type: String
+    description: "The log destination bucket name — always excluded from remediation to prevent infinite log delivery loops"
   AutomationAssumeRole:
     type: String
     description: "IAM role ARN for SSM Automation to assume"
-  ExcludedResourceIds:
-    type: String
-    default: "[]"
-    description: "JSON-encoded list of resource IDs to exempt from remediation"
-  LogDestinationBucket:
-    type: String
-    description: "The S3 bucket that receives access logs (inherently excluded from remediation)"
-  TargetBucket:
-    type: String
-    description: "Destination bucket for access logs"
-  TargetPrefix:
-    type: String
-    default: ""
-    description: "Prefix for log objects in the destination bucket"
 
 mainSteps:
   - name: CheckExclusion
     action: aws:executeScript
+    description: "Check both inherent exclusions (log destination bucket must not log to itself) and operator-defined exclusions before proceeding with remediation."
     inputs:
       Runtime: python3.11
       Handler: handler
       Script: |
-        import json
-
         def handler(events, context):
-            resource_id = events["BucketName"]
-            log_destination = events["LogDestinationBucket"]
+            bucket_name = events["BucketName"]
+            inherent_exclusion = events.get("InherentExclusionBucket", "").strip()
+            excluded_raw = events.get("ExcludedResourceIds", "").strip()
 
-            # Inherent exclusion: the log destination bucket must never have
-            # logging enabled on itself — doing so creates an infinite loop
-            # of log deliveries that grows exponentially and explodes costs.
-            if resource_id == log_destination:
+            # Inherent exclusion: the log destination bucket must never log to itself.
+            # Enabling logging on the destination bucket causes an infinite delivery loop
+            # that grows exponentially and can produce enormous unexpected costs.
+            if inherent_exclusion and bucket_name == inherent_exclusion:
                 return {
                     "action": "skip",
-                    "reason": f"{resource_id} is the log destination bucket (inherent exclusion — enabling logging on it would create an infinite loop)"
+                    "reason": (
+                        f"{bucket_name} is the log destination bucket and is inherently "
+                        "excluded — enabling logging on it would create an infinite loop."
+                    ),
                 }
 
-            # Operational exclusion: operator-specified resource IDs.
-            raw = events.get("ExcludedResourceIds") or "[]"
-            try:
-                excluded = json.loads(raw)
-            except (json.JSONDecodeError, TypeError):
-                excluded = []
-            if resource_id in excluded:
-                return {
-                    "action": "skip",
-                    "reason": f"{resource_id} is in the operator exclusion list"
-                }
+            # Operational exclusion: buckets the operator has explicitly opted out.
+            if excluded_raw:
+                excluded = [b.strip() for b in excluded_raw.split(",") if b.strip()]
+                if bucket_name in excluded:
+                    return {
+                        "action": "skip",
+                        "reason": f"{bucket_name} is in the operator exclusion list.",
+                    }
 
             return {"action": "remediate"}
       InputPayload:
         BucketName: "{{ BucketName }}"
-        LogDestinationBucket: "{{ LogDestinationBucket }}"
+        InherentExclusionBucket: "{{ InherentExclusionBucket }}"
         ExcludedResourceIds: "{{ ExcludedResourceIds }}"
     outputs:
       - Name: action
         Selector: $.Payload.action
+        Type: String
+      - Name: reason
+        Selector: $.Payload.reason
         Type: String
 
   - name: BranchOnExclusion
@@ -74,11 +77,11 @@ mainSteps:
         - NextStep: ExitSkipped
           Variable: "{{ CheckExclusion.action }}"
           StringEquals: "skip"
-      Default: EnableLogging
+      Default: InvokeRemediation
 
-  - name: EnableLogging
+  - name: InvokeRemediation
     action: aws:executeAwsApi
-    description: "Enable server access logging using the S3 PutBucketLogging API directly (no ACL grants — compatible with Bucket Owner Enforced)."
+    description: "Enable server access logging via a direct S3 PutBucketLogging API call. Using aws:executeAwsApi instead of aws:executeAutomation (AWS-ConfigureS3BucketLogging) because the managed document uses ACL-based approaches that fail on buckets with Bucket Owner Enforced (the default since April 2023)."
     inputs:
       Service: s3
       Api: PutBucketLogging
@@ -91,6 +94,7 @@ mainSteps:
 
   - name: ExitSkipped
     action: aws:sleep
+    description: "No-op exit step for excluded buckets. SSM Automation requires at least one step to run — this satisfies that requirement while doing nothing."
     inputs:
       Duration: PT1S
     isEnd: true
