@@ -309,7 +309,7 @@ mainSteps:
                         {"Key": "PreviousVersion", "Value": default_version_id},
                         {
                             "Key": "RemovedWildcard",
-                            "Value": f"{wildcard_service}:*",
+                            "Value": f"{wildcard_service}:wildcard",
                         },
                         {
                             "Key": "ReplacedWith",
