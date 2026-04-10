@@ -17,3 +17,6 @@
 .idea/
 .vscode/
 *.tfplan
+
+# Environment-specific values (never commit)
+terraform.tfvars

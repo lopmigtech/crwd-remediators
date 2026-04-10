@@ -26,6 +26,10 @@ parameters:
   AutomationAssumeRole:
     type: String
     description: "IAM role ARN for SSM to assume"
+  Partition:
+    type: String
+    default: "aws"
+    description: "AWS partition (aws, aws-us-gov, or aws-cn) — passed from Terraform data.aws_partition.current.partition for GovCloud portability"
   AssessmentTagKey:
     type: String
     default: "CrwdRemediation"
@@ -79,7 +83,7 @@ mainSteps:
     inputs:
       Service: dynamodb
       Api: TagResource
-      ResourceArn: "arn:aws:dynamodb:{{ global:REGION }}:{{ global:ACCOUNT_ID }}:table/{{ TableName }}"
+      ResourceArn: "arn:{{ Partition }}:dynamodb:{{ global:REGION }}:{{ global:ACCOUNT_ID }}:table/{{ TableName }}"
       Tags:
         - Key: "{{ AssessmentTagKey }}"
           Value: "cmk-encryption-required"
@@ -123,7 +127,7 @@ mainSteps:
     inputs:
       Service: dynamodb
       Api: TagResource
-      ResourceArn: "arn:aws:dynamodb:{{ global:REGION }}:{{ global:ACCOUNT_ID }}:table/{{ TableName }}"
+      ResourceArn: "arn:{{ Partition }}:dynamodb:{{ global:REGION }}:{{ global:ACCOUNT_ID }}:table/{{ TableName }}"
       Tags:
         - Key: "{{ AssessmentTagKey }}"
           Value: "cmk-encryption-applied"

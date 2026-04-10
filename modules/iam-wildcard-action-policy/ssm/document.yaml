@@ -365,12 +365,17 @@ mainSteps:
                     except Exception as e:
                         result["ReportError"] = str(e)
 
-                # Tag with truncated suggestion
-                tag_value = suggestion_json[:256] if len(suggestion_json) <= 256 else suggestion_json[:253] + "..."
+                # Tag with bracket-free suggestion (IAM tags don't allow [ ] { } characters)
+                # Format: svc1=action1+action2|svc2=action3+action4
+                tag_parts = []
+                for svc, info in suggestions.items():
+                    actions = "+".join(info.get("suggested_replacements", []))
+                    tag_parts.append(f"{svc}={actions}" if actions else f"{svc}=no-data")
+                tag_value = "|".join(tag_parts)[:256]
                 iam.tag_policy(
                     PolicyArn=policy_arn,
                     Tags=[
-                        {"Key": "SuggestedFix", "Value": tag_value},
+                        {"Key": "SuggestedFix", "Value": tag_value if tag_value else "see-s3-report"},
                         {"Key": "SuggestDate", "Value": timestamp},
                     ],
                 )

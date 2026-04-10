@@ -166,9 +166,11 @@ Before deploying any module:
 
 ## Module index
 
-| Module | Finding(s) | Config Rule | Tier | Status |
-|---|---|---|---|---|
-| [s3-access-logging](modules/s3-access-logging/) | Proactive hardening | `S3_BUCKET_LOGGING_ENABLED` | Tier 1 | Verified |
+| Module | Type | Finding(s) | Config Rule | Tier | Status |
+|---|---|---|---|---|---|
+| [s3-access-logging](modules/s3-access-logging/) | Detect-and-fix | Proactive hardening | `S3_BUCKET_LOGGING_ENABLED` (managed) | Tier 1 | Verified |
+| [dynamodb-cmk-encryption](modules/dynamodb-cmk-encryption/) | Detect-and-assess | Proactive hardening | `DYNAMODB_TABLE_ENCRYPTED_KMS` (managed) | Tier 1 | Verified |
+| [iam-wildcard-action-policy](modules/iam-wildcard-action-policy/) | Detect-and-analyze | IAM wildcard service actions | Custom Lambda | Tier 1 | Verified |
 
 See [docs/findings-index.md](docs/findings-index.md) for the complete finding-to-module mapping.
 

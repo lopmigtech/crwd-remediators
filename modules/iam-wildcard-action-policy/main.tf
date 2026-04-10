@@ -279,8 +279,8 @@ resource "aws_config_remediation_configuration" "this" {
   }
 
   parameter {
-    name         = "ExcludedResourceIds"
-    static_value = join(",", var.excluded_resource_ids)
+    name          = "ExcludedResourceIds"
+    static_values = var.excluded_resource_ids
   }
 
   parameter {

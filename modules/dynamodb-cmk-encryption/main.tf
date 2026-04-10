@@ -223,4 +223,9 @@ resource "aws_config_remediation_configuration" "this" {
     name         = "AssessmentTagKey"
     static_value = var.assessment_tag_key
   }
+
+  parameter {
+    name         = "Partition"
+    static_value = data.aws_partition.current.partition
+  }
 }
