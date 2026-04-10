@@ -81,8 +81,6 @@ resource "aws_iam_role_policy" "ssm_remediation" {
 # -------------------------------------------------------
 
 resource "aws_ssm_document" "this" {
-  count = var.use_custom_ssm_document ? 1 : 0
-
   name            = "${var.name_prefix}-s3-access-logging"
   document_type   = "Automation"
   document_format = "YAML"
@@ -97,7 +95,7 @@ resource "aws_ssm_document" "this" {
 resource "aws_config_remediation_configuration" "this" {
   config_rule_name = aws_config_config_rule.this.name
   target_type      = "SSM_DOCUMENT"
-  target_id        = var.use_custom_ssm_document ? aws_ssm_document.this[0].name : var.aws_managed_ssm_document_name
+  target_id        = aws_ssm_document.this.name
   resource_type    = "AWS::S3::Bucket"
 
   parameter {

@@ -10,7 +10,7 @@ output "config_rule_name" {
 
 output "ssm_document_name" {
   description = "Name of the SSM Automation document used for remediation"
-  value       = var.use_custom_ssm_document ? aws_ssm_document.this[0].name : var.aws_managed_ssm_document_name
+  value       = aws_ssm_document.this.name
 }
 
 output "remediation_configuration_id" {

@@ -49,18 +49,6 @@ variable "excluded_resource_ids" {
 
 # --- Module-specific inputs ---
 
-variable "use_custom_ssm_document" {
-  type        = bool
-  description = "Whether the module creates its own SSM Automation document with exclusion support. Defaults to true (Tier 1)."
-  default     = true
-}
-
-variable "aws_managed_ssm_document_name" {
-  type        = string
-  description = "Name of the AWS managed SSM Automation document to use when use_custom_ssm_document is false."
-  default     = "AWS-ConfigureS3BucketLogging"
-}
-
 variable "log_destination_bucket" {
   type        = string
   description = "Name of the S3 bucket that receives server access logs. This bucket is inherently excluded from remediation to prevent an infinite logging loop."
