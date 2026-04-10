@@ -1,0 +1,31 @@
+# terraform.tfvars.example
+# Copy this file to terraform.tfvars and fill in your values.
+# Do NOT commit terraform.tfvars -- it contains environment-specific values.
+
+# Required: prefix for all resource names created by this module
+# Use your team or project name (e.g., "security-team", "platform")
+name_prefix = "demo"
+
+# Safety: set to true ONLY after reviewing the non-compliance list.
+# Phase 1 (assess) only tags tables -- it never encrypts.
+# Run `terraform output non_compliant_resources_cli_command` after first deploy.
+automatic_remediation = false
+
+# Optional: table names to exclude from assessment and encryption.
+# Use for tables that legitimately use AWS-owned encryption.
+# excluded_resource_ids = ["legacy-table", "third-party-table"]
+
+# Optional: let the module create a KMS key (recommended).
+# Set to false if your organization requires centrally managed keys.
+create_kms_key = true
+
+# Optional: if create_kms_key = false, provide an existing key ARN.
+# Find yours with: aws kms list-aliases --query 'Aliases[?contains(AliasName, `dynamodb`)]'
+# kms_key_arn = "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
+
+# Optional: tag key used to mark assessed tables.
+# Default is "CrwdRemediation". Change if it conflicts with existing tags.
+# assessment_tag_key = "CrwdRemediation"
+
+# Optional: SNS topic for notifications when tables are assessed.
+# sns_topic_arn = "arn:aws:sns:us-east-1:123456789012:security-alerts"

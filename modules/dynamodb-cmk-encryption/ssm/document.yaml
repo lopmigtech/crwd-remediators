@@ -1,0 +1,142 @@
+schemaVersion: "0.3"
+description: >-
+  Two-phase DynamoDB CMK encryption remediator.
+  Phase 1 (assess): Tags the table for human review. Safe for automatic_remediation = true.
+  Phase 2 (encrypt): Applies customer-managed KMS encryption. Must be triggered manually.
+assumeRole: "{{ AutomationAssumeRole }}"
+parameters:
+  TableName:
+    type: String
+    description: "The DynamoDB table name to evaluate"
+  Action:
+    type: String
+    default: "assess"
+    description: "Phase 1 = 'assess' (tag + report). Phase 2 = 'encrypt' (apply CMK)."
+    allowedValues:
+      - assess
+      - encrypt
+  KmsKeyArn:
+    type: String
+    default: ""
+    description: "ARN of the customer-managed KMS key for Phase 2 encryption"
+  ExcludedResourceIds:
+    type: StringList
+    default: []
+    description: "Table names to exempt from remediation"
+  AutomationAssumeRole:
+    type: String
+    description: "IAM role ARN for SSM to assume"
+  AssessmentTagKey:
+    type: String
+    default: "CrwdRemediation"
+    description: "Tag key applied during assessment"
+
+mainSteps:
+  - name: CheckExclusion
+    action: aws:executeScript
+    inputs:
+      Runtime: python3.11
+      Handler: handler
+      Script: |
+        def handler(events, context):
+            resource_id = events["ResourceId"]
+            excluded = events.get("ExcludedResourceIds") or []
+            if resource_id in excluded:
+                return {"action": "skip", "reason": f"{resource_id} is in the exclusion list"}
+            return {"action": "proceed"}
+      InputPayload:
+        ResourceId: "{{ TableName }}"
+        ExcludedResourceIds: "{{ ExcludedResourceIds }}"
+    outputs:
+      - Name: action
+        Selector: $.Payload.action
+        Type: String
+
+  - name: BranchOnExclusion
+    action: aws:branch
+    inputs:
+      Choices:
+        - NextStep: ExitSkipped
+          Variable: "{{ CheckExclusion.action }}"
+          StringEquals: "skip"
+      Default: BranchOnAction
+
+  - name: BranchOnAction
+    action: aws:branch
+    inputs:
+      Choices:
+        - NextStep: EncryptTable
+          Variable: "{{ Action }}"
+          StringEquals: "encrypt"
+      Default: AssessTagTable
+
+  # ============================================================
+  # Phase 1: Assess — tag the table for human review
+  # ============================================================
+
+  - name: AssessTagTable
+    action: aws:executeAwsApi
+    inputs:
+      Service: dynamodb
+      Api: TagResource
+      ResourceArn: "arn:aws:dynamodb:{{ global:REGION }}:{{ global:ACCOUNT_ID }}:table/{{ TableName }}"
+      Tags:
+        - Key: "{{ AssessmentTagKey }}"
+          Value: "cmk-encryption-required"
+        - Key: "AssessedDate"
+          Value: "{{ global:DATE_TIME }}"
+    nextStep: DescribeTableForAssessment
+
+  - name: DescribeTableForAssessment
+    action: aws:executeAwsApi
+    inputs:
+      Service: dynamodb
+      Api: DescribeTable
+      TableName: "{{ TableName }}"
+    outputs:
+      - Name: TableStatus
+        Selector: $.Table.TableStatus
+        Type: String
+      - Name: SSEType
+        Selector: $.Table.SSEDescription.SSEType
+        Type: String
+    isEnd: true
+
+  # ============================================================
+  # Phase 2: Encrypt — apply customer-managed KMS key
+  # ============================================================
+
+  - name: EncryptTable
+    action: aws:executeAwsApi
+    inputs:
+      Service: dynamodb
+      Api: UpdateTable
+      TableName: "{{ TableName }}"
+      SSESpecification:
+        Enabled: true
+        SSEType: "KMS"
+        KMSMasterKeyId: "{{ KmsKeyArn }}"
+    nextStep: TagEncryptedTable
+
+  - name: TagEncryptedTable
+    action: aws:executeAwsApi
+    inputs:
+      Service: dynamodb
+      Api: TagResource
+      ResourceArn: "arn:aws:dynamodb:{{ global:REGION }}:{{ global:ACCOUNT_ID }}:table/{{ TableName }}"
+      Tags:
+        - Key: "{{ AssessmentTagKey }}"
+          Value: "cmk-encryption-applied"
+        - Key: "EncryptedDate"
+          Value: "{{ global:DATE_TIME }}"
+    isEnd: true
+
+  # ============================================================
+  # Exit — skipped due to exclusion
+  # ============================================================
+
+  - name: ExitSkipped
+    action: aws:sleep
+    inputs:
+      Duration: PT1S
+    isEnd: true
