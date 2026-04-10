@@ -1,13 +1,13 @@
 schemaVersion: "0.3"
-description: "Wrapper for AWS-ConfigureS3BucketLogging with inherent and operational exclusion support"
+description: "Enable S3 server access logging with inherent and operational exclusion support. Uses direct S3 API (compatible with modern Bucket Owner Enforced buckets — no ACL grants needed)."
 assumeRole: "{{ AutomationAssumeRole }}"
 parameters:
   BucketName:
     type: String
-    description: "The S3 bucket name to enable access logging on"
+    description: "The S3 bucket name to enable access logging on (injected by Config via RESOURCE_ID)"
   AutomationAssumeRole:
     type: String
-    description: "IAM role ARN for SSM to assume"
+    description: "IAM role ARN for SSM Automation to assume"
   ExcludedResourceIds:
     type: String
     default: "[]"
@@ -15,18 +15,6 @@ parameters:
   LogDestinationBucket:
     type: String
     description: "The S3 bucket that receives access logs (inherently excluded from remediation)"
-  GrantedPermission:
-    type: String
-    default: "WRITE"
-    description: "Permission granted to the grantee on the target bucket"
-  GranteeType:
-    type: String
-    default: "Group"
-    description: "Type of grantee (Group or CanonicalUser)"
-  GranteeUri:
-    type: String
-    default: "http://acs.amazonaws.com/groups/s3/LogDelivery"
-    description: "URI of the grantee group for log delivery"
   TargetBucket:
     type: String
     description: "Destination bucket for access logs"
@@ -86,27 +74,19 @@ mainSteps:
         - NextStep: ExitSkipped
           Variable: "{{ CheckExclusion.action }}"
           StringEquals: "skip"
-      Default: InvokeRemediation
+      Default: EnableLogging
 
-  - name: InvokeRemediation
-    action: aws:executeAutomation
+  - name: EnableLogging
+    action: aws:executeAwsApi
+    description: "Enable server access logging using the S3 PutBucketLogging API directly (no ACL grants — compatible with Bucket Owner Enforced)."
     inputs:
-      DocumentName: AWS-ConfigureS3BucketLogging
-      RuntimeParameters:
-        AutomationAssumeRole:
-          - "{{ AutomationAssumeRole }}"
-        BucketName:
-          - "{{ BucketName }}"
-        GrantedPermission:
-          - "{{ GrantedPermission }}"
-        GranteeType:
-          - "{{ GranteeType }}"
-        GranteeUri:
-          - "{{ GranteeUri }}"
-        TargetBucket:
-          - "{{ TargetBucket }}"
-        TargetPrefix:
-          - "{{ TargetPrefix }}"
+      Service: s3
+      Api: PutBucketLogging
+      Bucket: "{{ BucketName }}"
+      BucketLoggingStatus:
+        LoggingEnabled:
+          TargetBucket: "{{ TargetBucket }}"
+          TargetPrefix: "{{ TargetPrefix }}"
     isEnd: true
 
   - name: ExitSkipped

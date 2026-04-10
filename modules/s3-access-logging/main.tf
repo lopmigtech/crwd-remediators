@@ -57,17 +57,26 @@ resource "aws_iam_role" "ssm_automation" {
 }
 
 data "aws_iam_policy_document" "ssm_remediation" {
+  # S3 permissions for the actual remediation
   statement {
     sid    = "AllowS3LoggingRemediation"
     effect = "Allow"
     actions = [
       "s3:GetBucketLogging",
       "s3:PutBucketLogging",
+      "s3:GetBucketAcl",
+      "s3:PutBucketAcl",
     ]
     resources = [
       "arn:${data.aws_partition.current.partition}:s3:::*",
     ]
   }
+
+  # NOTE: No SSM execution or IAM PassRole permissions needed here.
+  # The custom SSM doc uses aws:executeAwsApi (direct S3 API call)
+  # instead of aws:executeAutomation (nested SSM doc delegation).
+  # This is simpler and avoids the ACL-incompatibility issue with
+  # the AWS managed AWS-ConfigureS3BucketLogging document.
 }
 
 resource "aws_iam_role_policy" "ssm_remediation" {
@@ -108,20 +117,12 @@ resource "aws_config_remediation_configuration" "this" {
     resource_value = "RESOURCE_ID"
   }
 
-  parameter {
-    name         = "GrantedPermission"
-    static_value = "WRITE"
-  }
-
-  parameter {
-    name         = "GranteeType"
-    static_value = "Group"
-  }
-
-  parameter {
-    name         = "GranteeUri"
-    static_value = "http://acs.amazonaws.com/groups/s3/LogDelivery"
-  }
+  # NOTE: GrantedPermission, GranteeType, GranteeUri parameters are intentionally
+  # OMITTED. Modern S3 buckets (created after April 2023) use "Bucket Owner
+  # Enforced" object ownership which disables ACLs. The AWS managed SSM doc
+  # falls back to the bucket-policy-based approach when grantee params are absent.
+  # The destination bucket must have a policy allowing logging.s3.amazonaws.com
+  # to s3:PutObject (set up separately, not managed by this module).
 
   parameter {
     name         = "TargetBucket"
