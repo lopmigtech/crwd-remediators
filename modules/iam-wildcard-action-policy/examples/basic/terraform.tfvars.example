@@ -1,0 +1,30 @@
+# terraform.tfvars.example
+# Copy this file to terraform.tfvars and fill in your values.
+# Do NOT commit terraform.tfvars — it contains environment-specific values.
+
+# Required: prefix for all resource names created by this module
+# This becomes part of the Config rule name, IAM role name, and SSM doc name.
+name_prefix = "my-project"
+
+# Optional: additional tags applied to all resources
+# tags = { Environment = "production", Team = "security" }
+
+# Safety: set to true ONLY after reviewing the non-compliance list
+# (run `terraform output non_compliant_resources_cli_command` after first deploy)
+automatic_remediation = false
+
+# Optional: IAM policy ARNs that should never be remediated
+# Use this for admin roles, break-glass policies, or other legitimate wildcard users.
+# excluded_resource_ids = ["arn:aws:iam::123456789012:policy/AdminPolicy"]
+
+# Optional: how many days of CloudTrail history to scan during scope-simple/suggest-moderate
+# More days = more confidence in the action list, but slower queries.
+# cloudtrail_lookback_days = 90
+
+# Optional: minimum distinct actions found before auto-scoping proceeds
+# Below this threshold, the policy is tagged NeedsManualReview instead.
+# min_actions_threshold = 3
+
+# Optional: S3 bucket for writing detailed JSON analysis reports
+# Leave empty to store results in policy tags only.
+# report_s3_bucket = "my-security-reports-bucket"

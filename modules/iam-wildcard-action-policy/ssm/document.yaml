@@ -1,0 +1,409 @@
+schemaVersion: "0.3"
+description: "Detect-and-analyze IAM policies with <service>:* wildcard actions. Supports three modes: analyze (categorize+tag), scope-simple (auto-replace single-wildcard using CloudTrail), suggest-moderate (generate suggestions for multi-wildcard)."
+assumeRole: "{{ AutomationAssumeRole }}"
+parameters:
+  ResourceId:
+    type: String
+    description: "The IAM policy ARN to evaluate"
+  ExcludedResourceIds:
+    type: StringList
+    default: []
+    description: "Policy ARNs to exempt from remediation"
+  AutomationAssumeRole:
+    type: String
+    description: "IAM role ARN for SSM to assume"
+  Action:
+    type: String
+    description: "Operation mode: analyze, scope-simple, or suggest-moderate"
+    default: "analyze"
+    allowedValues:
+      - "analyze"
+      - "scope-simple"
+      - "suggest-moderate"
+  CloudTrailLookbackDays:
+    type: String
+    default: "90"
+    description: "Number of days of CloudTrail history to analyze"
+  MinActionsThreshold:
+    type: String
+    default: "3"
+    description: "Minimum distinct actions from CloudTrail before auto-scoping"
+  ReportS3Bucket:
+    type: String
+    default: ""
+    description: "Optional S3 bucket for writing detailed analysis reports"
+
+mainSteps:
+  - name: CheckExclusion
+    action: aws:executeScript
+    inputs:
+      Runtime: python3.11
+      Handler: handler
+      Script: |
+        def handler(events, context):
+            resource_id = events["ResourceId"]
+            excluded = events.get("ExcludedResourceIds") or []
+            if resource_id in excluded:
+                return {"action": "skip", "reason": f"{resource_id} is in the exclusion list"}
+            return {"action": "remediate"}
+      InputPayload:
+        ResourceId: "{{ ResourceId }}"
+        ExcludedResourceIds: "{{ ExcludedResourceIds }}"
+    outputs:
+      - Name: action
+        Selector: $.Payload.action
+        Type: String
+
+  - name: BranchOnExclusion
+    action: aws:branch
+    inputs:
+      Choices:
+        - NextStep: ExitSkipped
+          Variable: "{{ CheckExclusion.action }}"
+          StringEquals: "skip"
+      Default: ReadPolicyAndAnalyze
+
+  - name: ReadPolicyAndAnalyze
+    action: aws:executeScript
+    description: "Read the IAM policy, identify wildcard actions, categorize, and execute the requested action mode."
+    inputs:
+      Runtime: python3.11
+      Handler: handler
+      Script: |
+        import boto3
+        import json
+        import datetime
+
+
+        def handler(events, context):
+            policy_arn = events["ResourceId"]
+            action_mode = events["Action"]
+            lookback_days = int(events.get("CloudTrailLookbackDays", "90"))
+            min_threshold = int(events.get("MinActionsThreshold", "3"))
+            report_bucket = events.get("ReportS3Bucket", "")
+
+            iam = boto3.client("iam")
+
+            # Step 1: Get the policy and its default version
+            policy_resp = iam.get_policy(PolicyArn=policy_arn)
+            policy = policy_resp["Policy"]
+            default_version_id = policy["DefaultVersionId"]
+            policy_name = policy["PolicyName"]
+
+            version_resp = iam.get_policy_version(
+                PolicyArn=policy_arn, VersionId=default_version_id
+            )
+            doc = version_resp["PolicyVersion"]["Document"]
+            if isinstance(doc, str):
+                doc = json.loads(doc)
+
+            # Step 2: Identify wildcard actions
+            statements = doc.get("Statement", [])
+            if isinstance(statements, dict):
+                statements = [statements]
+
+            wildcard_services = []
+            wildcard_stmt_indices = []
+            for idx, stmt in enumerate(statements):
+                if stmt.get("Effect") != "Allow":
+                    continue
+                actions = stmt.get("Action", [])
+                if isinstance(actions, str):
+                    actions = [actions]
+                stmt_wildcards = []
+                for act in actions:
+                    if isinstance(act, str) and act.endswith(":*") and act != "*":
+                        svc = act.split(":")[0]
+                        stmt_wildcards.append(svc)
+                        if svc not in wildcard_services:
+                            wildcard_services.append(svc)
+                if stmt_wildcards:
+                    wildcard_stmt_indices.append(idx)
+
+            # Step 3: Categorize
+            count = len(wildcard_services)
+            if count == 0:
+                category = "Exempt"
+            elif count == 1:
+                category = "Simple"
+            elif count <= 3:
+                category = "Moderate"
+            else:
+                category = "Complex"
+
+            # Step 4: Get attached entities
+            entities_resp = iam.list_entities_for_policy(PolicyArn=policy_arn)
+            attached_roles = [r["RoleName"] for r in entities_resp.get("PolicyRoles", [])]
+            attached_users = [u["UserName"] for u in entities_resp.get("PolicyUsers", [])]
+            attached_groups = [g["GroupName"] for g in entities_resp.get("PolicyGroups", [])]
+            attached_to = "+".join(
+                [f"role/{r}" for r in attached_roles]
+                + [f"user/{u}" for u in attached_users]
+                + [f"group/{g}" for g in attached_groups]
+            ) or "unattached"
+
+            timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            result = {
+                "PolicyArn": policy_arn,
+                "PolicyName": policy_name,
+                "Category": category,
+                "WildcardServices": "+".join(wildcard_services),
+                "WildcardCount": count,
+                "AttachedTo": attached_to,
+                "ActionMode": action_mode,
+                "Status": "InProgress",
+            }
+
+            if category == "Exempt":
+                result["Status"] = "Exempt-NoWildcards"
+                return result
+
+            # --- ANALYZE MODE ---
+            if action_mode == "analyze":
+                tags = [
+                    {"Key": "WildcardCategory", "Value": category},
+                    {"Key": "WildcardServices", "Value": "+".join(wildcard_services)},
+                    {"Key": "AttachedTo", "Value": attached_to[:256]},
+                    {"Key": "AssessedDate", "Value": timestamp},
+                ]
+
+                # Get service last accessed details for attached entities
+                last_accessed_services = []
+                for role_name in attached_roles:
+                    try:
+                        role_resp = iam.get_role(RoleName=role_name)
+                        role_arn = role_resp["Role"]["Arn"]
+                        job = iam.generate_service_last_accessed_details(Arn=role_arn)
+                        job_id = job["JobId"]
+
+                        import time
+                        for _ in range(10):
+                            details = iam.get_service_last_accessed_details(JobId=job_id)
+                            if details["JobStatus"] == "COMPLETED":
+                                for svc in details.get("ServicesLastAccessed", []):
+                                    if svc.get("LastAuthenticated"):
+                                        ns = svc.get("ServiceNamespace", "")
+                                        if ns and ns not in last_accessed_services:
+                                            last_accessed_services.append(ns)
+                                break
+                            elif details["JobStatus"] == "FAILED":
+                                break
+                            time.sleep(2)
+                    except Exception:
+                        pass
+
+                if last_accessed_services:
+                    tags.append(
+                        {
+                            "Key": "LastAccessedServices",
+                            "Value": "+".join(last_accessed_services)[:256],
+                        }
+                    )
+
+                iam.tag_policy(PolicyArn=policy_arn, Tags=tags)
+                result["Status"] = "Analyzed"
+                result["TagsApplied"] = json.dumps([t["Key"] for t in tags])
+                return result
+
+            # --- Helper: Query CloudTrail for a service ---
+            def query_cloudtrail_for_service(service_prefix, role_names, days):
+                ct = boto3.client("cloudtrail")
+                start_time = datetime.datetime.utcnow() - datetime.timedelta(days=days)
+                end_time = datetime.datetime.utcnow()
+                found_actions = set()
+
+                for role_name in role_names:
+                    try:
+                        lookup_attrs = [
+                            {"AttributeKey": "Username", "AttributeValue": role_name}
+                        ]
+                        paginator = ct.get_paginator("lookup_events")
+                        for page in paginator.paginate(
+                            LookupAttributes=lookup_attrs,
+                            StartTime=start_time,
+                            EndTime=end_time,
+                            MaxResults=50,
+                        ):
+                            for evt in page.get("Events", []):
+                                event_name = evt.get("EventName", "")
+                                event_source = evt.get("EventSource", "")
+                                svc_from_source = event_source.split(".")[0] if event_source else ""
+                                if svc_from_source.lower() == service_prefix.lower():
+                                    found_actions.add(f"{service_prefix}:{event_name}")
+                    except Exception:
+                        pass
+                return list(found_actions)
+
+            # --- SCOPE-SIMPLE MODE ---
+            if action_mode == "scope-simple":
+                if category != "Simple":
+                    result["Status"] = "Skipped-NotSimple"
+                    result["Message"] = f"Policy is {category}, not Simple. Use suggest-moderate or manual review."
+                    return result
+
+                wildcard_service = wildcard_services[0]
+                discovered = query_cloudtrail_for_service(
+                    wildcard_service, attached_roles, lookback_days
+                )
+
+                if len(discovered) < min_threshold:
+                    iam.tag_policy(
+                        PolicyArn=policy_arn,
+                        Tags=[
+                            {"Key": "NeedsManualReview", "Value": "true"},
+                            {
+                                "Key": "ReviewReason",
+                                "Value": f"Only {len(discovered)} actions found in CloudTrail - threshold is {min_threshold}",
+                            },
+                            {"Key": "ReviewDate", "Value": timestamp},
+                        ],
+                    )
+                    result["Status"] = "NeedsManualReview"
+                    result["DiscoveredActions"] = len(discovered)
+                    result["Threshold"] = min_threshold
+                    return result
+
+                # Build replacement policy document
+                new_statements = []
+                for idx, stmt in enumerate(statements):
+                    if idx in wildcard_stmt_indices:
+                        actions = stmt.get("Action", [])
+                        if isinstance(actions, str):
+                            actions = [actions]
+                        new_actions = [
+                            a for a in actions if not (a.endswith(":*") and a != "*")
+                        ]
+                        new_actions.extend(discovered)
+                        new_actions = sorted(set(new_actions))
+                        new_stmt = dict(stmt)
+                        new_stmt["Action"] = new_actions
+                        new_statements.append(new_stmt)
+                    else:
+                        new_statements.append(stmt)
+
+                new_doc = dict(doc)
+                new_doc["Statement"] = new_statements
+                new_doc_json = json.dumps(new_doc)
+
+                # Delete oldest non-default version if at 5 versions
+                versions_resp = iam.list_policy_versions(PolicyArn=policy_arn)
+                versions = versions_resp.get("Versions", [])
+                non_default = [v for v in versions if not v["IsDefaultVersion"]]
+                if len(versions) >= 5 and non_default:
+                    oldest = sorted(non_default, key=lambda v: v["CreateDate"])[0]
+                    iam.delete_policy_version(
+                        PolicyArn=policy_arn, VersionId=oldest["VersionId"]
+                    )
+
+                new_version = iam.create_policy_version(
+                    PolicyArn=policy_arn,
+                    PolicyDocument=new_doc_json,
+                    SetAsDefault=True,
+                )
+                new_version_id = new_version["PolicyVersion"]["VersionId"]
+
+                iam.tag_policy(
+                    PolicyArn=policy_arn,
+                    Tags=[
+                        {"Key": "CrwdAutoScoped", "Value": "true"},
+                        {"Key": "PreviousVersion", "Value": default_version_id},
+                        {
+                            "Key": "RemovedWildcard",
+                            "Value": f"{wildcard_service}:*",
+                        },
+                        {
+                            "Key": "ReplacedWith",
+                            "Value": "+".join(discovered)[:256],
+                        },
+                        {"Key": "ScopedDate", "Value": timestamp},
+                    ],
+                )
+
+                result["Status"] = "AutoScoped"
+                result["NewVersionId"] = new_version_id
+                result["PreviousVersionId"] = default_version_id
+                result["DiscoveredActions"] = len(discovered)
+                result["Actions"] = "+".join(discovered)[:256]
+                return result
+
+            # --- SUGGEST-MODERATE MODE ---
+            if action_mode == "suggest-moderate":
+                suggestions = {}
+                for svc in wildcard_services:
+                    discovered = query_cloudtrail_for_service(
+                        svc, attached_roles, lookback_days
+                    )
+                    suggestions[svc] = {
+                        "current": f"{svc}:*",
+                        "suggested_replacements": discovered,
+                        "action_count": len(discovered),
+                        "meets_threshold": len(discovered) >= min_threshold,
+                    }
+
+                suggestion_json = json.dumps(suggestions)
+
+                if report_bucket:
+                    try:
+                        s3 = boto3.client("s3")
+                        report_key = f"iam-wildcard-reports/{policy_name}/{timestamp}.json"
+                        report_data = {
+                            "policy_arn": policy_arn,
+                            "policy_name": policy_name,
+                            "category": category,
+                            "wildcard_services": wildcard_services,
+                            "attached_to": attached_to,
+                            "suggestions": suggestions,
+                            "assessed_date": timestamp,
+                        }
+                        s3.put_object(
+                            Bucket=report_bucket,
+                            Key=report_key,
+                            Body=json.dumps(report_data, indent=2),
+                            ContentType="application/json",
+                        )
+                        result["ReportLocation"] = f"s3://{report_bucket}/{report_key}"
+                    except Exception as e:
+                        result["ReportError"] = str(e)
+
+                # Tag with truncated suggestion
+                tag_value = suggestion_json[:256] if len(suggestion_json) <= 256 else suggestion_json[:253] + "..."
+                iam.tag_policy(
+                    PolicyArn=policy_arn,
+                    Tags=[
+                        {"Key": "SuggestedFix", "Value": tag_value},
+                        {"Key": "SuggestDate", "Value": timestamp},
+                    ],
+                )
+
+                result["Status"] = "SuggestionsGenerated"
+                result["Suggestions"] = suggestion_json[:256]
+                return result
+
+            result["Status"] = "UnknownAction"
+            return result
+      InputPayload:
+        ResourceId: "{{ ResourceId }}"
+        Action: "{{ Action }}"
+        CloudTrailLookbackDays: "{{ CloudTrailLookbackDays }}"
+        MinActionsThreshold: "{{ MinActionsThreshold }}"
+        ReportS3Bucket: "{{ ReportS3Bucket }}"
+    outputs:
+      - Name: Status
+        Selector: $.Payload.Status
+        Type: String
+      - Name: Category
+        Selector: $.Payload.Category
+        Type: String
+      - Name: WildcardServices
+        Selector: $.Payload.WildcardServices
+        Type: String
+      - Name: PolicyName
+        Selector: $.Payload.PolicyName
+        Type: String
+    isEnd: true
+
+  - name: ExitSkipped
+    action: aws:sleep
+    inputs:
+      Duration: PT1S
+    isEnd: true
