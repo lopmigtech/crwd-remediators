@@ -6,7 +6,9 @@ variables:
   TF_VERSION: "1.6.0"
 
 .terraform-base:
-  image: hashicorp/terraform:${TF_VERSION}
+  image:
+    name: hashicorp/terraform:${TF_VERSION}
+    entrypoint: [""]
   before_script:
     - terraform --version
 
