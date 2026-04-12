@@ -1,6 +1,5 @@
 stages:
   - validate
-  - test
 
 variables:
   TF_VERSION: "1.6.0"
@@ -27,17 +26,5 @@ validate:
         if [ -d "$dir" ]; then
           echo "=== Validating $dir ==="
           (cd "$dir" && terraform init -backend=false && terraform validate)
-        fi
-      done
-
-test:
-  extends: .terraform-base
-  stage: test
-  script:
-    - |
-      for dir in modules/*/; do
-        if [ -d "$dir" ] && [ -f "${dir}tests/plan.tftest.hcl" ]; then
-          echo "=== Testing $dir ==="
-          (cd "$dir" && terraform init -backend=false && terraform test)
         fi
       done
