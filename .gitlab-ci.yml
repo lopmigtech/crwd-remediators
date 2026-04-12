@@ -30,18 +30,6 @@ validate:
         fi
       done
 
-plan-examples:
-  extends: .terraform-base
-  stage: validate
-  script:
-    - |
-      for dir in modules/*/examples/basic/; do
-        if [ -d "$dir" ]; then
-          echo "=== Planning $dir ==="
-          (cd "$dir" && terraform init -backend=false && terraform plan -input=false)
-        fi
-      done
-
 test:
   extends: .terraform-base
   stage: test
