@@ -1,11 +1,13 @@
 variable "name_prefix" {
   type        = string
   description = "Prefix used for naming all resources created by this module."
+  default     = "example"
 }
 
 variable "log_destination_bucket" {
   type        = string
   description = "Name of the S3 bucket that receives server access logs."
+  default     = "my-central-logging-bucket"
 }
 
 variable "log_destination_prefix" {

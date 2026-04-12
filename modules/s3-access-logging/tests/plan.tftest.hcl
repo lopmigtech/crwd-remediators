@@ -7,22 +7,22 @@ run "plan_resources" {
   command = plan
 
   assert {
-    condition     = length(aws_config_config_rule.this) == 1
+    condition     = aws_config_config_rule.this.name != ""
     error_message = "Module must create exactly one Config rule"
   }
 
   assert {
-    condition     = aws_config_config_rule.this.source[0].source_identifier == "S3_BUCKET_LOGGING_ENABLED"
+    condition     = one(aws_config_config_rule.this.source).source_identifier == "S3_BUCKET_LOGGING_ENABLED"
     error_message = "Config rule source_identifier must be S3_BUCKET_LOGGING_ENABLED"
   }
 
   assert {
-    condition     = contains(data.aws_iam_policy_document.ssm_assume_role.statement[0].principals[0].identifiers, "ssm.amazonaws.com")
+    condition     = contains(one(data.aws_iam_policy_document.ssm_assume_role.statement[0].principals).identifiers, "ssm.amazonaws.com")
     error_message = "SSM automation role trust policy must allow ssm.amazonaws.com"
   }
 
   assert {
-    condition     = length(aws_config_remediation_configuration.this) == 1
+    condition     = aws_config_remediation_configuration.this.config_rule_name != ""
     error_message = "Module must create exactly one remediation configuration"
   }
 
@@ -37,7 +37,7 @@ run "plan_resources" {
   }
 
   assert {
-    condition     = aws_config_config_rule.this.scope[0].compliance_resource_types[0] == "AWS::S3::Bucket"
+    condition     = contains(one(aws_config_config_rule.this.scope).compliance_resource_types, "AWS::S3::Bucket")
     error_message = "Config rule scope must target AWS::S3::Bucket resource type"
   }
 }
