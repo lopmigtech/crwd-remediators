@@ -311,6 +311,11 @@ resource "aws_config_remediation_configuration" "this" {
     static_value = var.report_s3_bucket
   }
 
+  parameter {
+    name         = "FlapWindowDays"
+    static_value = tostring(var.flap_window_days)
+  }
+
   automatic                  = var.automatic_remediation
   maximum_automatic_attempts = var.maximum_automatic_attempts
   retry_attempt_seconds      = var.retry_attempt_seconds

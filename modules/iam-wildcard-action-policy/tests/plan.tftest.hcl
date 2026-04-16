@@ -44,6 +44,16 @@ run "plan_resources" {
     condition     = [for p in aws_config_remediation_configuration.this.parameter : p.static_value if p.name == "Action"][0] == "analyze"
     error_message = "Action parameter must default to 'analyze' (dry-run-safe)"
   }
+
+  assert {
+    condition     = length([for p in aws_config_remediation_configuration.this.parameter : p if p.name == "FlapWindowDays"]) == 1
+    error_message = "Remediation config must pass FlapWindowDays parameter to SSM document"
+  }
+
+  assert {
+    condition     = [for p in aws_config_remediation_configuration.this.parameter : p.static_value if p.name == "FlapWindowDays"][0] == "7"
+    error_message = "Default flap_window_days must be 7"
+  }
 }
 
 run "invalid_remediation_action_rejected" {

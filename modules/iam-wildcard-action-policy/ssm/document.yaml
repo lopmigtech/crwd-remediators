@@ -32,6 +32,10 @@ parameters:
     type: String
     default: ""
     description: "Optional S3 bucket for writing detailed analysis reports"
+  FlapWindowDays:
+    type: String
+    default: "7"
+    description: "Days within which successive scope-simple runs on the same policy are tagged as a flap"
 
 mainSteps:
   - name: CheckExclusion
@@ -302,6 +306,41 @@ mainSteps:
                 )
                 new_version_id = new_version["PolicyVersion"]["VersionId"]
 
+                # Flap detection: compare prior ScopedDate to now
+                prior_scoped_date = None
+                try:
+                    existing_tags_resp = iam.list_policy_tags(PolicyArn=policy_arn)
+                    existing_tag_map = {t["Key"]: t["Value"] for t in existing_tags_resp.get("Tags", [])}
+                    prior_scoped_date = existing_tag_map.get("ScopedDate")
+                except Exception:
+                    existing_tag_map = {}
+
+                flap_window_days = int(events.get("FlapWindowDays", "7"))
+                flap_count = int(existing_tag_map.get("FlapCount", "0"))
+                flap_tags = []
+                if prior_scoped_date:
+                    try:
+                        prior_dt = datetime.datetime.strptime(prior_scoped_date, "%Y-%m-%dT%H:%M:%SZ")
+                        delta_days = (datetime.datetime.utcnow() - prior_dt).days
+                        if delta_days <= flap_window_days:
+                            flap_count += 1
+                            flap_tags.extend([
+                                {"Key": "FlapCount", "Value": str(flap_count)},
+                                {"Key": "FlapDetected", "Value": "true"},
+                                {"Key": "FlapLastDetected", "Value": timestamp},
+                            ])
+                            if flap_count == 2:
+                                flap_tags.append({"Key": "FlapFirstSeen", "Value": prior_scoped_date})
+                        else:
+                            flap_count = 1
+                            flap_tags.append({"Key": "FlapCount", "Value": "1"})
+                    except ValueError:
+                        flap_count = 1
+                        flap_tags.append({"Key": "FlapCount", "Value": "1"})
+                else:
+                    flap_count = 1
+                    flap_tags.append({"Key": "FlapCount", "Value": "1"})
+
                 iam.tag_policy(
                     PolicyArn=policy_arn,
                     Tags=[
@@ -316,7 +355,7 @@ mainSteps:
                             "Value": "+".join(discovered)[:256],
                         },
                         {"Key": "ScopedDate", "Value": timestamp},
-                    ],
+                    ] + flap_tags,
                 )
 
                 result["Status"] = "AutoScoped"
@@ -392,6 +431,7 @@ mainSteps:
         CloudTrailLookbackDays: "{{ CloudTrailLookbackDays }}"
         MinActionsThreshold: "{{ MinActionsThreshold }}"
         ReportS3Bucket: "{{ ReportS3Bucket }}"
+        FlapWindowDays: "{{ FlapWindowDays }}"
     outputs:
       - Name: Status
         Selector: $.Payload.Status

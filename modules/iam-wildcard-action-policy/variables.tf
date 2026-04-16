@@ -94,3 +94,13 @@ variable "evaluation_frequency" {
     error_message = "evaluation_frequency must be one of: Off, One_Hour, Three_Hours, Six_Hours, Twelve_Hours, TwentyFour_Hours."
   }
 }
+
+variable "flap_window_days" {
+  type        = number
+  description = "Time window within which successive scope-simple runs on the same policy are considered a flap. Used only for FlapDetected tagging; does not change remediation behavior."
+  default     = 7
+  validation {
+    condition     = var.flap_window_days >= 1 && var.flap_window_days <= 90
+    error_message = "flap_window_days must be between 1 and 90."
+  }
+}
