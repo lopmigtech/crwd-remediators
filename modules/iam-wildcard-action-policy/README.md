@@ -33,15 +33,55 @@ Custom Lambda ──evaluates──> AWS Config Rule ──triggers──> Remed
 
 ### Policy categories
 
-The module categorizes each non-compliant policy based on the number of distinct wildcard services it contains:
+The module categorizes each non-compliant policy based on the number of distinct `<service>:*` wildcard services it contains. The category determines which remediation tools are available and how much effort is required to fix it.
 
-| Category | Wildcard count | Example | Remediation approach | Complexity |
-|----------|---------------|---------|---------------------|------------|
-| **Simple** | 1 service | `"Action": ["ssm:*"]` | Can be auto-scoped via `scope-simple`. CloudTrail lookup discovers the actual actions used, and the wildcard is replaced with specific permissions in a new policy version. Rollback is one CLI command. | Low — single service to analyze, single wildcard to replace |
-| **Moderate** | 2–3 services | `"Action": ["s3:*", "ec2:*"]` | Use `full-analysis` or `suggest-moderate` to get per-service recommendations. Each service gets its own CloudTrail lookup and suggested replacement list. Apply fixes manually or at the source (Terraform/CFN). `scope-simple` will refuse to run on these. | Medium — multiple services to analyze, each may have different usage patterns |
-| **Complex** | 4+ services | `"Action": ["ssm:*", "s3:*", "ec2:*", "iam:*", "lambda:*"]` | Same tooling as Moderate, but the policy likely needs a full redesign rather than a wildcard-by-wildcard replacement. Consider splitting into multiple policies scoped to specific roles. The S3 report gives per-service suggestions to inform the redesign. | High — usually indicates a policy that grew organically and needs architectural review |
+#### Simple (1 wildcard service)
 
-The `WildcardCategory` tag is applied by `analyze` and `full-analysis` modes. Use it to prioritize remediation — start with Simple policies (quick wins, automatable), then Moderate (targeted manual fixes), then Complex (architectural work).
+A policy with exactly one service-scoped wildcard — for example, `"Action": ["ssm:*"]` or `"Action": ["s3:GetObject", "ec2:*", "logs:CreateLogGroup"]` (only `ec2:*` is a wildcard; the others are specific actions).
+
+**Why these are easy to fix:** There's only one wildcard to replace, and the module can do it automatically. The `scope-simple` mode queries CloudTrail to discover which specific actions the attached role actually uses within that service (e.g., `ec2:DescribeInstances`, `ec2:RunInstances`), then creates a new policy version with those specific actions replacing the wildcard.
+
+**How to remediate:**
+- **Automatic:** Set `remediation_action = "scope-simple"` and the module replaces the wildcard fleet-wide. Policies that don't have enough CloudTrail data are tagged `NeedsManualReview` instead of modified (the `min_actions_threshold` safety gate).
+- **Manual:** Run `Action=full-analysis` first to see the `SuggestedFix` tag or S3 report, review the recommended actions, then run `Action=scope-simple` on policies you're comfortable auto-scoping.
+- **Rollback:** If a scoped policy breaks something, one command restores the previous version: `aws iam set-default-policy-version --policy-arn <arn> --version-id <PreviousVersion tag value>`.
+
+**Real-world examples:** A Lambda execution role with `ssm:*` that only calls `ssm:GetParameter` and `ssm:GetParametersByPath`. A CI/CD pipeline role with `ecr:*` that only pushes images. These are quick wins — the fix is a 30-second auto-scope.
+
+#### Moderate (2–3 wildcard services)
+
+A policy with two or three service-scoped wildcards — for example, `"Action": ["s3:*", "ec2:*"]` or `"Action": ["lambda:*", "sns:*", "sqs:*"]`.
+
+**Why these need more attention:** Each wildcard service requires its own CloudTrail analysis, and the results may differ in quality. One service might have strong CloudTrail data (20+ distinct actions discovered) while another shows nothing (the role was recently created, or the service has minimal API surface). The `scope-simple` mode **refuses to run** on Moderate policies because replacing multiple wildcards simultaneously increases risk — a mistake in one service's replacement could break the role.
+
+**How to remediate:**
+- **Review suggestions first:** Run `Action=full-analysis` with `report_s3_bucket` set. The S3 report contains per-service suggestions with `meets_threshold` flags telling you which services have enough CloudTrail evidence and which need manual review.
+- **Fix at source:** Take the suggested replacement actions from the report, update the Terraform/CloudFormation/console definition at the source. This is safer than auto-scoping because a human reviews each service's replacement list.
+- **Consider splitting:** If the policy serves multiple distinct purposes (e.g., `s3:*` for data access + `ec2:*` for infrastructure management), consider splitting it into two focused policies. This makes future scoping simpler and improves auditability.
+
+**Real-world examples:** An application role with `s3:*` + `ec2:*` that reads S3 objects and describes EC2 instances. A monitoring role with `logs:*` + `cloudwatch:*` that creates log groups and reads metrics. These typically take 15–30 minutes to fix per policy with the S3 report guiding the work.
+
+#### Complex (4+ wildcard services)
+
+A policy with four or more service-scoped wildcards — for example, `"Action": ["ssm:*", "s3:*", "ec2:*", "iam:*", "lambda:*"]`.
+
+**Why these need architectural review:** A policy with this many wildcards usually isn't a "we were lazy once" situation — it's a sign the policy grew organically over months or years as the role took on more responsibilities. Replacing wildcards one-by-one produces a policy with 50+ specific actions that's nearly impossible to audit. The better fix is usually restructuring: split the role's responsibilities into distinct roles with focused policies.
+
+**How to remediate:**
+- **Start with visibility:** Run `Action=full-analysis` to see the full picture. The S3 report shows per-service CloudTrail activity, `last_accessed_services` reveals which services the role is actively using (vs. wildcards that are granted but never exercised), and the `AttachedTo` tag shows which roles/users/groups are affected.
+- **Identify unused wildcards:** Services that appear in `wildcard_services` but NOT in `last_accessed_services` or `suggested_replacements` may be safe to remove entirely. A policy with `iam:*` where CloudTrail shows zero IAM API calls likely doesn't need `iam:*` at all.
+- **Plan the restructure:** Group the wildcard services by function (data access, compute, observability, security), design a focused policy per group, and migrate attached roles to the new policies. The module's per-service suggestions inform each new policy's action list.
+- **Use exemptions during migration:** Tag the Complex policy with `CrwdRemediatorExempt=true` and a reason like `"Under active restructure — target completion Q3 2026"` to suppress repeated remediation attempts during the migration.
+
+**Real-world examples:** A legacy "power user" policy that accumulated wildcards over two years. An early-stage startup's admin role that was never scoped. A shared-services role that handles logging, monitoring, deployment, and data access in a single policy. These are projects, not quick fixes — budget 2–4 hours per policy with a team review.
+
+#### Prioritization
+
+The `WildcardCategory` tag is applied by `analyze` and `full-analysis` modes. Use it to prioritize remediation:
+
+1. **Simple policies first** — quick wins, automatable, low risk. Reduces your fleet-wide wildcard count fast.
+2. **Moderate policies second** — targeted manual fixes guided by the S3 report's per-service suggestions.
+3. **Complex policies last** — architectural work that requires planning, team coordination, and testing.
 
 ## Prerequisites
 
