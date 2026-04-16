@@ -14,12 +14,13 @@ parameters:
     description: "IAM role ARN for SSM to assume"
   Action:
     type: String
-    description: "Operation mode: analyze, scope-simple, or suggest-moderate"
+    description: "Operation mode: analyze, scope-simple, suggest-moderate, or full-analysis"
     default: "analyze"
     allowedValues:
       - "analyze"
       - "scope-simple"
       - "suggest-moderate"
+      - "full-analysis"
   CloudTrailLookbackDays:
     type: String
     default: "90"
@@ -240,8 +241,8 @@ mainSteps:
                 result["Status"] = "Exempt-NoWildcards"
                 return result
 
-            # --- ANALYZE MODE ---
-            if action_mode == "analyze":
+            # --- ANALYZE MODE (also runs for full-analysis) ---
+            if action_mode in ("analyze", "full-analysis"):
                 tags = [
                     {"Key": "WildcardCategory", "Value": category},
                     {"Key": "WildcardServices", "Value": "+".join(wildcard_services)},
@@ -283,9 +284,11 @@ mainSteps:
                     )
 
                 iam.tag_policy(PolicyArn=policy_arn, Tags=tags)
-                result["Status"] = "Analyzed"
-                result["TagsApplied"] = json.dumps([t["Key"] for t in tags])
-                return result
+
+                if action_mode == "analyze":
+                    result["Status"] = "Analyzed"
+                    result["TagsApplied"] = json.dumps([t["Key"] for t in tags])
+                    return result
 
             # --- Helper: Query CloudTrail for a service ---
             def query_cloudtrail_for_service(service_prefix, role_names, days, action_threshold=3):
@@ -499,8 +502,8 @@ mainSteps:
                 result["Actions"] = "+".join(discovered)[:256]
                 return result
 
-            # --- SUGGEST-MODERATE MODE ---
-            if action_mode == "suggest-moderate":
+            # --- SUGGEST-MODERATE MODE (also runs for full-analysis) ---
+            if action_mode in ("suggest-moderate", "full-analysis"):
                 suggestions = {}
                 for svc in wildcard_services:
                     discovered = query_cloudtrail_for_service(
@@ -528,6 +531,8 @@ mainSteps:
                             "suggestions": suggestions,
                             "assessed_date": timestamp,
                         }
+                        if action_mode == "full-analysis":
+                            report_data["last_accessed_services"] = last_accessed_services if last_accessed_services else []
                         s3.put_object(
                             Bucket=report_bucket,
                             Key=report_key,
@@ -539,7 +544,6 @@ mainSteps:
                         result["ReportError"] = str(e)
 
                 # Tag with bracket-free suggestion (IAM tags don't allow [ ] { } characters)
-                # Format: svc1=action1+action2|svc2=action3+action4
                 tag_parts = []
                 for svc, info in suggestions.items():
                     actions = "+".join(info.get("suggested_replacements", []))
@@ -553,7 +557,7 @@ mainSteps:
                     ],
                 )
 
-                result["Status"] = "SuggestionsGenerated"
+                result["Status"] = "FullAnalysis" if action_mode == "full-analysis" else "SuggestionsGenerated"
                 result["Suggestions"] = suggestion_json[:256]
                 return result
 

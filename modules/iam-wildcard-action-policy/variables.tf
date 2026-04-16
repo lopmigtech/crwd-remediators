@@ -77,11 +77,11 @@ variable "report_s3_bucket" {
 
 variable "remediation_action" {
   type        = string
-  description = "SSM document Action parameter that Config invokes when automatic_remediation = true. Valid: 'analyze' (tag-only), 'scope-simple' (auto-rewrite single-wildcard policies), 'suggest-moderate' (generate suggestions for multi-wildcard policies)."
+  description = "SSM document Action parameter that Config invokes when automatic_remediation = true. Valid: 'analyze' (tag-only), 'scope-simple' (auto-rewrite single-wildcard policies), 'suggest-moderate' (generate suggestions), 'full-analysis' (analyze + suggest in one pass)."
   default     = "analyze"
   validation {
-    condition     = contains(["analyze", "scope-simple", "suggest-moderate"], var.remediation_action)
-    error_message = "remediation_action must be one of: analyze, scope-simple, suggest-moderate."
+    condition     = contains(["analyze", "scope-simple", "suggest-moderate", "full-analysis"], var.remediation_action)
+    error_message = "remediation_action must be one of: analyze, scope-simple, suggest-moderate, full-analysis."
   }
 }
 
