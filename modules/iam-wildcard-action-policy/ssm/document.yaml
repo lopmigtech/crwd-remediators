@@ -288,32 +288,69 @@ mainSteps:
                 return result
 
             # --- Helper: Query CloudTrail for a service ---
-            def query_cloudtrail_for_service(service_prefix, role_names, days):
+            def query_cloudtrail_for_service(service_prefix, role_names, days, action_threshold=3):
                 ct = boto3.client("cloudtrail")
                 start_time = datetime.datetime.utcnow() - datetime.timedelta(days=days)
                 end_time = datetime.datetime.utcnow()
                 found_actions = set()
+                role_name_set = set(role_names)
+                event_source_filter = f"{service_prefix.lower()}.amazonaws.com"
 
+                # Pass 1: fast path — Username = role_name
+                # Works when the assume-role session name matches the role name
                 for role_name in role_names:
                     try:
-                        lookup_attrs = [
-                            {"AttributeKey": "Username", "AttributeValue": role_name}
-                        ]
                         paginator = ct.get_paginator("lookup_events")
                         for page in paginator.paginate(
-                            LookupAttributes=lookup_attrs,
+                            LookupAttributes=[{"AttributeKey": "Username", "AttributeValue": role_name}],
                             StartTime=start_time,
                             EndTime=end_time,
                             MaxResults=50,
                         ):
                             for evt in page.get("Events", []):
-                                event_name = evt.get("EventName", "")
-                                event_source = evt.get("EventSource", "")
-                                svc_from_source = event_source.split(".")[0] if event_source else ""
-                                if svc_from_source.lower() == service_prefix.lower():
-                                    found_actions.add(f"{service_prefix}:{event_name}")
+                                svc = evt.get("EventSource", "").split(".")[0]
+                                if svc.lower() == service_prefix.lower():
+                                    found_actions.add(f"{service_prefix}:{evt.get('EventName', '')}")
                     except Exception:
                         pass
+
+                if len(found_actions) >= action_threshold:
+                    return list(found_actions)
+
+                # Pass 2: slow path — EventSource filter + JSON parse for role identity
+                # Catches assumed-role sessions where session name != role name
+                try:
+                    paginator = ct.get_paginator("lookup_events")
+                    pages_checked = 0
+                    for page in paginator.paginate(
+                        LookupAttributes=[{"AttributeKey": "EventSource", "AttributeValue": event_source_filter}],
+                        StartTime=start_time,
+                        EndTime=end_time,
+                        MaxResults=50,
+                    ):
+                        for evt in page.get("Events", []):
+                            try:
+                                detail = json.loads(evt.get("CloudTrailEvent", "{}"))
+                                identity = detail.get("userIdentity", {})
+
+                                matched = False
+                                if identity.get("type") == "IAMUser":
+                                    matched = identity.get("userName") in role_name_set
+                                elif identity.get("type") == "AssumedRole":
+                                    issuer = identity.get("sessionContext", {}).get("sessionIssuer", {})
+                                    matched = issuer.get("userName") in role_name_set
+
+                                if matched:
+                                    found_actions.add(f"{service_prefix}:{evt.get('EventName', '')}")
+                            except (json.JSONDecodeError, KeyError):
+                                pass
+
+                        pages_checked += 1
+                        if pages_checked >= 20:
+                            break
+                except Exception:
+                    pass
+
                 return list(found_actions)
 
             # --- SCOPE-SIMPLE MODE ---
@@ -325,7 +362,7 @@ mainSteps:
 
                 wildcard_service = wildcard_services[0]
                 discovered = query_cloudtrail_for_service(
-                    wildcard_service, attached_roles, lookback_days
+                    wildcard_service, attached_roles, lookback_days, min_threshold
                 )
 
                 if len(discovered) < min_threshold:
@@ -467,7 +504,7 @@ mainSteps:
                 suggestions = {}
                 for svc in wildcard_services:
                     discovered = query_cloudtrail_for_service(
-                        svc, attached_roles, lookback_days
+                        svc, attached_roles, lookback_days, min_threshold
                     )
                     suggestions[svc] = {
                         "current": f"{svc}:*",
