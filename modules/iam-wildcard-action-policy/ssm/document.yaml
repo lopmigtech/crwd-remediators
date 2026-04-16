@@ -507,7 +507,7 @@ mainSteps:
                 for svc, info in suggestions.items():
                     actions = "+".join(info.get("suggested_replacements", []))
                     tag_parts.append(f"{svc}={actions}" if actions else f"{svc}=no-data")
-                tag_value = "|".join(tag_parts)[:256]
+                tag_value = "/".join(tag_parts)[:256]
                 iam.tag_policy(
                     PolicyArn=policy_arn,
                     Tags=[
