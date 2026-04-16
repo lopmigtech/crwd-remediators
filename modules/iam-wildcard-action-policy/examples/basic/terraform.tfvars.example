@@ -28,3 +28,42 @@ automatic_remediation = false
 # Optional: S3 bucket for writing detailed JSON analysis reports
 # Leave empty to store results in policy tags only.
 # report_s3_bucket = "my-security-reports-bucket"
+
+# --- v1.1.0 additions ---
+
+# Which SSM mode Config invokes automatically. "analyze" = tag-only (safe).
+# "scope-simple" auto-rewrites single-wildcard policies. "suggest-moderate"
+# generates suggestions for multi-wildcard policies.
+# remediation_action = "analyze"
+
+# How often Config re-evaluates all in-scope IAM policies. Use "Off" to
+# disable the schedule entirely (change-triggered only, matching v1.0.0).
+# Options: Off, One_Hour, Three_Hours, Six_Hours, Twelve_Hours, TwentyFour_Hours
+# evaluation_frequency = "TwentyFour_Hours"
+
+# Days within which successive scopes on the same policy are considered a flap.
+# Only affects FlapDetected/FlapCount tagging.
+# flap_window_days = 7
+
+# Honor the CrwdRemediatorExempt=true tag on policies (default on).
+# Set to false to only allow exclusions via excluded_resource_ids.
+# tag_based_exemption_enabled = true
+
+# Tag key to check for exemption. Change only to align with existing tooling.
+# exemption_tag_key = "CrwdRemediatorExempt"
+
+# Require a non-empty CrwdRemediatorExemptReason alongside the boolean.
+# Strongly recommended: keep this true.
+# require_exemption_reason = true
+
+# Auto-apply exemption tag on policies that flap repeatedly.
+# Off by default because it silently pauses enforcement. CrowdStrike
+# monitors the CrwdAutoExempted=true tag if you turn this on.
+# auto_exempt_on_flap_enabled = false
+
+# Flap count that triggers auto-exempt (only when auto_exempt_on_flap_enabled=true).
+# auto_exempt_flap_threshold = 3
+
+# Days until the auto-applied exemption expires and remediation resumes.
+# Shorter = more human-review pressure.
+# auto_exempt_duration_days = 30
