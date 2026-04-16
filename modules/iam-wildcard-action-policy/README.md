@@ -47,6 +47,17 @@ Expected output: `true`.
 
 ## Quick start (deployment guide)
 
+0. **Tag any break-glass or core-system policies that should be exempt from remediation.** Before `terraform apply`, apply these tags to each IAM policy you want the module to skip:
+
+   ```bash
+   aws iam tag-policy \
+     --policy-arn arn:aws:iam::123456789012:policy/BreakGlassAdminPolicy \
+     --tags Key=CrwdRemediatorExempt,Value=true \
+            Key=CrwdRemediatorExemptReason,Value="Break-glass role for SRE incident response"
+   ```
+
+   The reason tag is required by default (see `require_exemption_reason`). Exemption tags without a non-empty reason are ignored. This is intentional: every exemption should be auditable.
+
 1. Copy the example directory:
    ```bash
    cp -r modules/iam-wildcard-action-policy/examples/basic /path/to/my-deployment
@@ -104,7 +115,16 @@ aws ssm start-automation-execution \
 | `name_prefix` | string | (required) | A short project/team identifier (e.g., `prod-security`). Becomes part of all resource names. |
 | `tags` | map(string) | `{}` | Your standard resource tags (e.g., `{ Environment = "prod", Team = "security" }`). |
 | `automatic_remediation` | bool | `false` | Leave `false` until you've reviewed the non-compliance list. Only set `true` after confirming the analyze results look correct. |
-| `excluded_resource_ids` | list(string) | `[]` | IAM policy ARNs that should never be remediated. Use for admin policies, break-glass roles, or other legitimate wildcard users. |
+| `remediation_action` | string | `"analyze"` | Which SSM mode Config invokes automatically. `analyze` = tag-only (safe default), `scope-simple` = auto-rewrite Simple policies, `suggest-moderate` = generate suggestions. |
+| `evaluation_frequency` | string | `"TwentyFour_Hours"` | How often Config re-evaluates all in-scope policies. `Off` disables the schedule (change-only evaluation). Options: `Off`, `One_Hour`, `Three_Hours`, `Six_Hours`, `Twelve_Hours`, `TwentyFour_Hours`. |
+| `excluded_resource_ids` | list(string) | `[]` | IAM policy ARNs that should never be remediated. Use for admin policies, break-glass roles, or other legitimate wildcard users. Centrally-managed via Terraform. |
+| `tag_based_exemption_enabled` | bool | `true` | Read policy tags for exemption. Default on — the intended workflow is to pre-tag break-glass policies with `CrwdRemediatorExempt=true` before `terraform apply`. |
+| `exemption_tag_key` | string | `"CrwdRemediatorExempt"` | Tag key to check for exemption. Change only if aligning with existing CRWD tooling. |
+| `require_exemption_reason` | bool | `true` | Require a non-empty `CrwdRemediatorExemptReason` tag alongside the boolean. Prevents silent bypass via bare tag application. |
+| `auto_exempt_on_flap_enabled` | bool | `false` | Opt-in. When true, the module self-applies exemption tags on policies that flap `auto_exempt_flap_threshold` times. Pauses enforcement for `auto_exempt_duration_days`, then resumes. |
+| `auto_exempt_flap_threshold` | number | `3` | Flap count that triggers auto-exempt (only when `auto_exempt_on_flap_enabled = true`). |
+| `auto_exempt_duration_days` | number | `30` | How long auto-applied exemptions last before expiring. Shorter = more human-review pressure. |
+| `flap_window_days` | number | `7` | Days within which successive scopes on the same policy count as a flap. Used only for the `FlapDetected` tag. |
 | `cloudtrail_lookback_days` | number | `90` | How many days of CloudTrail history to scan in scope-simple/suggest-moderate modes. More days = better coverage. |
 | `min_actions_threshold` | number | `3` | Minimum distinct actions found in CloudTrail before auto-scoping proceeds. Below this, the policy is tagged NeedsManualReview. |
 | `report_s3_bucket` | string | `""` | S3 bucket name for JSON analysis reports. Leave empty to use policy tags only. |
@@ -154,6 +174,62 @@ excluded_resource_ids = [
   "arn:aws:iam::123456789012:policy/BreakGlassPolicy",
 ]
 ```
+
+## When policies are externally managed
+
+If an IAM policy is managed by Terraform, CloudFormation, or any other declarative source of truth, and its source definition contains a wildcard action, this module's auto-remediation will fight the source:
+
+```
+git push (policy.tf has ssm:*)
+  → terraform apply writes wildcard version
+    → Config detects NON_COMPLIANT → SSM scopes → wildcard replaced
+      → next terraform apply detects drift, re-writes wildcard
+        → Config detects → SSM scopes again → flap
+```
+
+This is called the **flap loop**. The module detects and tags it (see "Flap-detection tags" below) but does not stop it — the remediation keeps doing its job. You have three options:
+
+| Pattern | When to use | How |
+|---------|-------------|-----|
+| **Fix at source** | The owning team can update the source-of-truth | Run `Action=suggest-moderate` or `Action=analyze` to discover the action list, then update the Terraform/CFN to use specific actions instead of the wildcard. Submit a PR at source. |
+| **Exclude, then fix at source on a schedule** | The fix requires change-window coordination | Either (a) tag the policy `CrwdRemediatorExempt=true` with a `CrwdRemediatorExemptReason` like `"awaiting Q2 IAM cleanup; owner=team-x"`, or (b) add the ARN to the module's `excluded_resource_ids` list. Resume remediation by removing the tag/entry after the source fix lands. |
+| **Accept the flap** | Policy is test-only, short-lived, or the flap is a forcing function to push the owning team to act | Do nothing. The `FlapDetected=true` tag plus daily CloudTrail noise surfaces the problem to whoever owns the policy. |
+
+### Find flapping policies
+
+```bash
+aws iam list-policies --scope Local --query "Policies[].Arn" --output text | while read arn; do
+  last=$(aws iam list-policy-tags --policy-arn "$arn" \
+    --query "Tags[?Key=='FlapLastDetected'].Value" --output text 2>/dev/null)
+  [ -n "$last" ] && echo "$last $arn"
+done | sort -r
+```
+
+Note: queries on `FlapLastDetected` (sorted by recency) rather than bare `FlapDetected=true` to show currently-active flaps first. `FlapDetected` persists as audit history even after the flap window expires.
+
+### Flap-detection tags
+
+The SSM document writes these tags whenever `scope-simple` runs on the same policy twice within `flap_window_days` (default 7):
+
+| Tag | Value | Meaning |
+|-----|-------|---------|
+| `FlapCount` | integer string | Number of successive scopes within the flap window |
+| `FlapDetected` | `"true"` | Set on second scope within the window; persists as audit history |
+| `FlapFirstSeen` | ISO-8601 timestamp | When the first flap in the current episode was observed |
+| `FlapLastDetected` | ISO-8601 timestamp | When the most recent flap was observed |
+
+These tags are informational only — they do not change remediation behavior.
+
+### Exemption tag schema
+
+| Tag | Value | Who writes it | Required? |
+|-----|-------|--------------|-----------|
+| `CrwdRemediatorExempt` | `"true"` | Human operator OR module (auto-exempt) | Yes — gate |
+| `CrwdRemediatorExemptReason` | Non-empty string describing the justification | Human operator OR module (auto-exempt) | Yes when `require_exemption_reason = true` (default) |
+| `CrwdRemediatorExemptExpiry` | ISO-8601 date (`YYYY-MM-DD`) | Module only (auto-exempt writes this; human-applied exemptions typically omit it) | No — when absent, human-applied exemptions never expire |
+| `CrwdAutoExempted` | `"true"` | Module only | Marks auto-applied exemptions; used by CrowdStrike filters to distinguish from human-applied |
+
+Human-applied exemptions have no expiry by default. Auto-applied exemptions expire after `auto_exempt_duration_days` (default 30) and the module resumes remediation.
 
 ## Rollback procedure
 
