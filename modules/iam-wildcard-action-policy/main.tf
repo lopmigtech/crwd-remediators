@@ -285,7 +285,7 @@ resource "aws_config_remediation_configuration" "this" {
 
   parameter {
     name         = "Action"
-    static_value = "analyze"
+    static_value = var.remediation_action
   }
 
   parameter {

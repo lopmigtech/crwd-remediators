@@ -39,4 +39,22 @@ run "plan_resources" {
     condition     = aws_lambda_function.rule_evaluator.function_name != ""
     error_message = "Module must create exactly one Lambda function for Config rule evaluation"
   }
+
+  assert {
+    condition     = [for p in aws_config_remediation_configuration.this.parameter : p.static_value if p.name == "Action"][0] == "analyze"
+    error_message = "Action parameter must default to 'analyze' (dry-run-safe)"
+  }
+}
+
+run "invalid_remediation_action_rejected" {
+  command = plan
+
+  variables {
+    name_prefix        = "test"
+    remediation_action = "delete-everything"
+  }
+
+  expect_failures = [
+    var.remediation_action,
+  ]
 }
