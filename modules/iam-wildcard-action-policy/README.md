@@ -29,6 +29,7 @@ Custom Lambda ──evaluates──> AWS Config Rule ──triggers──> Remed
 | `analyze` | Categorize + tag (Simple/Moderate/Complex) | Yes | Phase 1: initial assessment |
 | `scope-simple` | Auto-replace single-wildcard using CloudTrail data | Caution | Phase 2: after reviewing analyze results |
 | `suggest-moderate` | Generate suggestions, do NOT apply | Yes | Phase 3: for multi-wildcard policies |
+| `full-analysis` | Analyze + suggest in one pass (categorize, tag, query CloudTrail, write S3 report) | Yes | When you want complete visibility in a single evaluation |
 
 ## Prerequisites
 
@@ -115,7 +116,7 @@ aws ssm start-automation-execution \
 | `name_prefix` | string | (required) | A short project/team identifier (e.g., `prod-security`). Becomes part of all resource names. |
 | `tags` | map(string) | `{}` | Your standard resource tags (e.g., `{ Environment = "prod", Team = "security" }`). |
 | `automatic_remediation` | bool | `false` | Leave `false` until you've reviewed the non-compliance list. Only set `true` after confirming the analyze results look correct. |
-| `remediation_action` | string | `"analyze"` | Which SSM mode Config invokes automatically. `analyze` = tag-only (safe default), `scope-simple` = auto-rewrite Simple policies, `suggest-moderate` = generate suggestions. |
+| `remediation_action` | string | `"analyze"` | Which SSM mode Config invokes automatically. `analyze` = tag-only (safe default), `scope-simple` = auto-rewrite Simple policies, `suggest-moderate` = generate suggestions, `full-analysis` = analyze + suggest in one pass. |
 | `evaluation_frequency` | string | `"TwentyFour_Hours"` | How often Config re-evaluates all in-scope policies. `Off` disables the schedule (change-only evaluation). Options: `Off`, `One_Hour`, `Three_Hours`, `Six_Hours`, `Twelve_Hours`, `TwentyFour_Hours`. |
 | `excluded_resource_ids` | list(string) | `[]` | IAM policy ARNs that should never be remediated. Use for admin policies, break-glass roles, or other legitimate wildcard users. Centrally-managed via Terraform. |
 | `tag_based_exemption_enabled` | bool | `true` | Read policy tags for exemption. Default on — the intended workflow is to pre-tag break-glass policies with `CrwdRemediatorExempt=true` before `terraform apply`. |
