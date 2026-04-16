@@ -31,6 +31,18 @@ Custom Lambda ──evaluates──> AWS Config Rule ──triggers──> Remed
 | `full-analysis` | Analyze + suggest in one pass — categorize, tag, query CloudTrail, and write S3 report | No | Yes | **Recommended for most deployments.** Complete visibility in a single evaluation |
 | `scope-simple` | Auto-replace single-wildcard policies using CloudTrail-discovered actions | **Yes — creates a new policy version** | Caution | After reviewing `full-analysis` results and confirming Simple policies are safe to auto-scope |
 
+### Policy categories
+
+The module categorizes each non-compliant policy based on the number of distinct wildcard services it contains:
+
+| Category | Wildcard count | Example | Remediation approach | Complexity |
+|----------|---------------|---------|---------------------|------------|
+| **Simple** | 1 service | `"Action": ["ssm:*"]` | Can be auto-scoped via `scope-simple`. CloudTrail lookup discovers the actual actions used, and the wildcard is replaced with specific permissions in a new policy version. Rollback is one CLI command. | Low — single service to analyze, single wildcard to replace |
+| **Moderate** | 2–3 services | `"Action": ["s3:*", "ec2:*"]` | Use `full-analysis` or `suggest-moderate` to get per-service recommendations. Each service gets its own CloudTrail lookup and suggested replacement list. Apply fixes manually or at the source (Terraform/CFN). `scope-simple` will refuse to run on these. | Medium — multiple services to analyze, each may have different usage patterns |
+| **Complex** | 4+ services | `"Action": ["ssm:*", "s3:*", "ec2:*", "iam:*", "lambda:*"]` | Same tooling as Moderate, but the policy likely needs a full redesign rather than a wildcard-by-wildcard replacement. Consider splitting into multiple policies scoped to specific roles. The S3 report gives per-service suggestions to inform the redesign. | High — usually indicates a policy that grew organically and needs architectural review |
+
+The `WildcardCategory` tag is applied by `analyze` and `full-analysis` modes. Use it to prioritize remediation — start with Simple policies (quick wins, automatable), then Moderate (targeted manual fixes), then Complex (architectural work).
+
 ## Prerequisites
 
 1. **AWS Config must be enabled** in the target account and recording IAM policy resources. Verify:
