@@ -316,6 +316,21 @@ resource "aws_config_remediation_configuration" "this" {
     static_value = tostring(var.flap_window_days)
   }
 
+  parameter {
+    name         = "TagBasedExemptionEnabled"
+    static_value = var.tag_based_exemption_enabled ? "true" : "false"
+  }
+
+  parameter {
+    name         = "ExemptionTagKey"
+    static_value = var.exemption_tag_key
+  }
+
+  parameter {
+    name         = "RequireExemptionReason"
+    static_value = var.require_exemption_reason ? "true" : "false"
+  }
+
   automatic                  = var.automatic_remediation
   maximum_automatic_attempts = var.maximum_automatic_attempts
   retry_attempt_seconds      = var.retry_attempt_seconds

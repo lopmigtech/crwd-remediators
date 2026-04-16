@@ -36,6 +36,24 @@ parameters:
     type: String
     default: "7"
     description: "Days within which successive scope-simple runs on the same policy are tagged as a flap"
+  TagBasedExemptionEnabled:
+    type: String
+    default: "true"
+    description: "If 'true', CheckExclusion reads IAM policy tags and skips remediation when CrwdRemediatorExempt=true"
+    allowedValues:
+      - "true"
+      - "false"
+  ExemptionTagKey:
+    type: String
+    default: "CrwdRemediatorExempt"
+    description: "Tag key checked by CheckExclusion"
+  RequireExemptionReason:
+    type: String
+    default: "true"
+    description: "If 'true', the exemption tag is only honored when a CrwdRemediatorExemptReason tag contains a non-empty string"
+    allowedValues:
+      - "true"
+      - "false"
 
 mainSteps:
   - name: CheckExclusion
@@ -44,15 +62,60 @@ mainSteps:
       Runtime: python3.11
       Handler: handler
       Script: |
+        import boto3
+        import datetime
+
         def handler(events, context):
             resource_id = events["ResourceId"]
             excluded = events.get("ExcludedResourceIds") or []
+
+            # Existing: list-based exclusion
             if resource_id in excluded:
                 return {"action": "skip", "reason": f"{resource_id} is in the exclusion list"}
-            return {"action": "remediate"}
+
+            # New: tag-based exclusion
+            if events.get("TagBasedExemptionEnabled", "false").lower() != "true":
+                return {"action": "remediate"}
+
+            exemption_tag_key = events.get("ExemptionTagKey", "CrwdRemediatorExempt")
+            require_reason = events.get("RequireExemptionReason", "true").lower() == "true"
+
+            iam = boto3.client("iam")
+            try:
+                tags_resp = iam.list_policy_tags(PolicyArn=resource_id)
+                tag_map = {t["Key"]: t["Value"] for t in tags_resp.get("Tags", [])}
+            except Exception as e:
+                print(f"WARN: tag lookup failed on {resource_id}: {e} - proceeding with remediation")
+                return {"action": "remediate", "reason": f"tag lookup failed: {e}"}
+
+            exempt_value = tag_map.get(exemption_tag_key, "").lower()
+            if exempt_value != "true":
+                return {"action": "remediate"}
+
+            if require_reason:
+                reason = tag_map.get("CrwdRemediatorExemptReason", "").strip()
+                if not reason:
+                    print(f"WARN: exemption tag on {resource_id} has no reason - ignoring exemption")
+                    return {"action": "remediate", "reason": "exemption missing required reason tag"}
+
+            expiry = tag_map.get("CrwdRemediatorExemptExpiry", "")
+            if expiry:
+                try:
+                    expiry_dt = datetime.datetime.strptime(expiry, "%Y-%m-%d")
+                    if datetime.datetime.utcnow() > expiry_dt:
+                        return {"action": "remediate", "reason": f"exemption expired on {expiry}"}
+                except ValueError:
+                    # Invalid expiry format on a human-applied exemption - fail open (treat as no expiry)
+                    pass
+
+            reason = tag_map.get("CrwdRemediatorExemptReason", "exempt via tag")
+            return {"action": "skip", "reason": reason}
       InputPayload:
         ResourceId: "{{ ResourceId }}"
         ExcludedResourceIds: "{{ ExcludedResourceIds }}"
+        TagBasedExemptionEnabled: "{{ TagBasedExemptionEnabled }}"
+        ExemptionTagKey: "{{ ExemptionTagKey }}"
+        RequireExemptionReason: "{{ RequireExemptionReason }}"
     outputs:
       - Name: action
         Selector: $.Payload.action

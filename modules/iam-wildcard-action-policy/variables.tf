@@ -104,3 +104,21 @@ variable "flap_window_days" {
     error_message = "flap_window_days must be between 1 and 90."
   }
 }
+
+variable "tag_based_exemption_enabled" {
+  type        = bool
+  description = "If true, the SSM document's CheckExclusion step reads policy tags and skips remediation when CrwdRemediatorExempt=true is present with a valid reason. Defaults to true — intended workflow is for operators to pre-tag known break-glass/admin policies before terraform apply."
+  default     = true
+}
+
+variable "exemption_tag_key" {
+  type        = string
+  description = "Tag key used to exempt a policy from remediation. Value 'true' triggers skip logic. Kept as a variable so the namespace can be aligned with other CRWD tooling conventions."
+  default     = "CrwdRemediatorExempt"
+}
+
+variable "require_exemption_reason" {
+  type        = bool
+  description = "If true, the exemption tag is only honored when a companion CrwdRemediatorExemptReason tag contains a non-empty string. Bare boolean exemptions are ignored (and logged) when this is true, ensuring every exemption is auditable."
+  default     = true
+}

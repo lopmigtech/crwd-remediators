@@ -54,6 +54,21 @@ run "plan_resources" {
     condition     = [for p in aws_config_remediation_configuration.this.parameter : p.static_value if p.name == "FlapWindowDays"][0] == "7"
     error_message = "Default flap_window_days must be 7"
   }
+
+  assert {
+    condition     = [for p in aws_config_remediation_configuration.this.parameter : p.static_value if p.name == "TagBasedExemptionEnabled"][0] == "true"
+    error_message = "tag_based_exemption_enabled must default to true (per design decision)"
+  }
+
+  assert {
+    condition     = [for p in aws_config_remediation_configuration.this.parameter : p.static_value if p.name == "ExemptionTagKey"][0] == "CrwdRemediatorExempt"
+    error_message = "exemption_tag_key must default to CrwdRemediatorExempt"
+  }
+
+  assert {
+    condition     = [for p in aws_config_remediation_configuration.this.parameter : p.static_value if p.name == "RequireExemptionReason"][0] == "true"
+    error_message = "require_exemption_reason must default to true (fail-loud on bare boolean exemptions)"
+  }
 }
 
 run "invalid_remediation_action_rejected" {
