@@ -101,7 +101,7 @@ mainSteps:
             expiry = tag_map.get("CrwdRemediatorExemptExpiry", "")
             if expiry:
                 try:
-                    expiry_dt = datetime.datetime.strptime(expiry, "%Y-%m-%d")
+                    expiry_dt = datetime.datetime.strptime(expiry, "%Y-%m-%d") + datetime.timedelta(days=1)
                     if datetime.datetime.utcnow() > expiry_dt:
                         return {"action": "remediate", "reason": f"exemption expired on {expiry}"}
                 except ValueError:
