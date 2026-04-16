@@ -84,3 +84,13 @@ variable "remediation_action" {
     error_message = "remediation_action must be one of: analyze, scope-simple, suggest-moderate."
   }
 }
+
+variable "evaluation_frequency" {
+  type        = string
+  description = "How often Config re-evaluates all in-scope IAM policies. Valid AWS Config MaximumExecutionFrequency values, or 'Off' to disable scheduled evaluation (change-triggered only)."
+  default     = "TwentyFour_Hours"
+  validation {
+    condition     = contains(["Off", "One_Hour", "Three_Hours", "Six_Hours", "Twelve_Hours", "TwentyFour_Hours"], var.evaluation_frequency)
+    error_message = "evaluation_frequency must be one of: Off, One_Hour, Three_Hours, Six_Hours, Twelve_Hours, TwentyFour_Hours."
+  }
+}

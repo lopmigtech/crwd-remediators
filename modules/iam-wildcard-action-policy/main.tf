@@ -120,6 +120,14 @@ resource "aws_config_config_rule" "this" {
     source_detail {
       message_type = "OversizedConfigurationItemChangeNotification"
     }
+
+    dynamic "source_detail" {
+      for_each = var.evaluation_frequency == "Off" ? [] : [1]
+      content {
+        message_type                = "ScheduledNotification"
+        maximum_execution_frequency = var.evaluation_frequency
+      }
+    }
   }
 
   scope {

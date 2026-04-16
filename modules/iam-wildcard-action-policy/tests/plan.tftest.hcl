@@ -58,3 +58,35 @@ run "invalid_remediation_action_rejected" {
     var.remediation_action,
   ]
 }
+
+run "scheduled_notification_enabled_by_default" {
+  command = plan
+
+  variables {
+    name_prefix = "test"
+  }
+
+  assert {
+    condition     = length([for sd in aws_config_config_rule.this.source[0].source_detail : sd if sd.message_type == "ScheduledNotification"]) == 1
+    error_message = "Config rule must have exactly one ScheduledNotification source_detail when evaluation_frequency != 'Off'"
+  }
+
+  assert {
+    condition     = [for sd in aws_config_config_rule.this.source[0].source_detail : sd.maximum_execution_frequency if sd.message_type == "ScheduledNotification"][0] == "TwentyFour_Hours"
+    error_message = "Default evaluation_frequency must be TwentyFour_Hours"
+  }
+}
+
+run "scheduled_notification_disabled_when_off" {
+  command = plan
+
+  variables {
+    name_prefix          = "test"
+    evaluation_frequency = "Off"
+  }
+
+  assert {
+    condition     = length([for sd in aws_config_config_rule.this.source[0].source_detail : sd if sd.message_type == "ScheduledNotification"]) == 0
+    error_message = "Config rule must not have a ScheduledNotification source_detail when evaluation_frequency = 'Off'"
+  }
+}
