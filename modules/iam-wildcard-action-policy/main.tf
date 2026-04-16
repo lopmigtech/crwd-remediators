@@ -6,6 +6,15 @@ locals {
   })
 }
 
+resource "terraform_data" "validation" {
+  lifecycle {
+    precondition {
+      condition     = !var.auto_exempt_on_flap_enabled || var.tag_based_exemption_enabled
+      error_message = "auto_exempt_on_flap_enabled = true requires tag_based_exemption_enabled = true. Tag-based exemption must be on for auto-exempt to have any effect."
+    }
+  }
+}
+
 # -----------------------------------------------------------------------------
 # Lambda Config Rule Evaluator — IAM role and function
 # -----------------------------------------------------------------------------
@@ -329,6 +338,21 @@ resource "aws_config_remediation_configuration" "this" {
   parameter {
     name         = "RequireExemptionReason"
     static_value = var.require_exemption_reason ? "true" : "false"
+  }
+
+  parameter {
+    name         = "AutoExemptEnabled"
+    static_value = var.auto_exempt_on_flap_enabled ? "true" : "false"
+  }
+
+  parameter {
+    name         = "AutoExemptFlapThreshold"
+    static_value = tostring(var.auto_exempt_flap_threshold)
+  }
+
+  parameter {
+    name         = "AutoExemptDurationDays"
+    static_value = tostring(var.auto_exempt_duration_days)
   }
 
   automatic                  = var.automatic_remediation

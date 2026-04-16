@@ -122,3 +122,29 @@ variable "require_exemption_reason" {
   description = "If true, the exemption tag is only honored when a companion CrwdRemediatorExemptReason tag contains a non-empty string. Bare boolean exemptions are ignored (and logged) when this is true, ensuring every exemption is auditable."
   default     = true
 }
+
+variable "auto_exempt_on_flap_enabled" {
+  type        = bool
+  description = "If true, the SSM document self-applies CrwdRemediatorExempt=true on policies whose FlapCount reaches auto_exempt_flap_threshold. Requires tag_based_exemption_enabled=true. Opt-in — default false — because it silently pauses enforcement on the affected policy until the expiry."
+  default     = false
+}
+
+variable "auto_exempt_flap_threshold" {
+  type        = number
+  description = "Number of flap cycles that triggers auto-exemption. Only applies when auto_exempt_on_flap_enabled = true."
+  default     = 3
+  validation {
+    condition     = var.auto_exempt_flap_threshold >= 2 && var.auto_exempt_flap_threshold <= 20
+    error_message = "auto_exempt_flap_threshold must be between 2 and 20."
+  }
+}
+
+variable "auto_exempt_duration_days" {
+  type        = number
+  description = "Days until an auto-applied exemption expires. After expiry, the exemption tag is ignored and remediation resumes. Set low to force quick human review."
+  default     = 30
+  validation {
+    condition     = var.auto_exempt_duration_days >= 1 && var.auto_exempt_duration_days <= 365
+    error_message = "auto_exempt_duration_days must be between 1 and 365."
+  }
+}

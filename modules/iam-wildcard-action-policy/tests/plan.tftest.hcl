@@ -69,6 +69,35 @@ run "plan_resources" {
     condition     = [for p in aws_config_remediation_configuration.this.parameter : p.static_value if p.name == "RequireExemptionReason"][0] == "true"
     error_message = "require_exemption_reason must default to true (fail-loud on bare boolean exemptions)"
   }
+
+  assert {
+    condition     = [for p in aws_config_remediation_configuration.this.parameter : p.static_value if p.name == "AutoExemptEnabled"][0] == "false"
+    error_message = "auto_exempt_on_flap_enabled must default to false (opt-in)"
+  }
+
+  assert {
+    condition     = [for p in aws_config_remediation_configuration.this.parameter : p.static_value if p.name == "AutoExemptFlapThreshold"][0] == "3"
+    error_message = "auto_exempt_flap_threshold must default to 3"
+  }
+
+  assert {
+    condition     = [for p in aws_config_remediation_configuration.this.parameter : p.static_value if p.name == "AutoExemptDurationDays"][0] == "30"
+    error_message = "auto_exempt_duration_days must default to 30"
+  }
+}
+
+run "auto_exempt_requires_tag_based_exemption" {
+  command = plan
+
+  variables {
+    name_prefix                 = "test"
+    tag_based_exemption_enabled = false
+    auto_exempt_on_flap_enabled = true
+  }
+
+  expect_failures = [
+    terraform_data.validation,
+  ]
 }
 
 run "invalid_remediation_action_rejected" {

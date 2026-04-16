@@ -54,6 +54,21 @@ parameters:
     allowedValues:
       - "true"
       - "false"
+  AutoExemptEnabled:
+    type: String
+    default: "false"
+    description: "If 'true', auto-apply exemption tag when FlapCount reaches AutoExemptFlapThreshold"
+    allowedValues:
+      - "true"
+      - "false"
+  AutoExemptFlapThreshold:
+    type: String
+    default: "3"
+    description: "Flap count that triggers auto-exemption (only applies when AutoExemptEnabled=true)"
+  AutoExemptDurationDays:
+    type: String
+    default: "30"
+    description: "Days until auto-applied exemption expires"
 
 mainSteps:
   - name: CheckExclusion
@@ -421,6 +436,25 @@ mainSteps:
                     ] + flap_tags,
                 )
 
+                # Auto-exempt on flap threshold
+                auto_exempt_enabled = events.get("AutoExemptEnabled", "false").lower() == "true"
+                auto_exempt_threshold = int(events.get("AutoExemptFlapThreshold", "3"))
+                auto_exempt_duration_days = int(events.get("AutoExemptDurationDays", "30"))
+
+                if auto_exempt_enabled and flap_count >= auto_exempt_threshold:
+                    expiry_date = (datetime.datetime.utcnow() + datetime.timedelta(days=auto_exempt_duration_days)).strftime("%Y-%m-%d")
+                    iam.tag_policy(
+                        PolicyArn=policy_arn,
+                        Tags=[
+                            {"Key": "CrwdRemediatorExempt", "Value": "true"},
+                            {"Key": "CrwdRemediatorExemptReason", "Value": f"auto-applied after {flap_count} flap cycles within {flap_window_days}d window"},
+                            {"Key": "CrwdRemediatorExemptExpiry", "Value": expiry_date},
+                            {"Key": "CrwdAutoExempted", "Value": "true"},
+                        ],
+                    )
+                    result["AutoExempted"] = "true"
+                    result["AutoExemptExpiry"] = expiry_date
+
                 result["Status"] = "AutoScoped"
                 result["NewVersionId"] = new_version_id
                 result["PreviousVersionId"] = default_version_id
@@ -495,6 +529,9 @@ mainSteps:
         MinActionsThreshold: "{{ MinActionsThreshold }}"
         ReportS3Bucket: "{{ ReportS3Bucket }}"
         FlapWindowDays: "{{ FlapWindowDays }}"
+        AutoExemptEnabled: "{{ AutoExemptEnabled }}"
+        AutoExemptFlapThreshold: "{{ AutoExemptFlapThreshold }}"
+        AutoExemptDurationDays: "{{ AutoExemptDurationDays }}"
     outputs:
       - Name: Status
         Selector: $.Payload.Status
