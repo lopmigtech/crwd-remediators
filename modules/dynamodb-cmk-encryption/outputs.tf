@@ -48,5 +48,5 @@ output "kms_key_id" {
 
 output "phase2_encrypt_command" {
   description = "Pre-built CLI command to manually trigger Phase 2 encryption on a specific table"
-  value       = "aws ssm start-automation-execution --document-name ${aws_ssm_document.this.name} --parameters '{\"TableName\":[\"<TABLE_NAME>\"],\"Action\":[\"encrypt\"],\"AutomationAssumeRole\":[\"${aws_iam_role.ssm_automation.arn}\"],\"KmsKeyArn\":[\"${local.effective_kms_key_arn}\"],\"ExcludedResourceIds\":[\"[]\"],\"AssessmentTagKey\":[\"${var.assessment_tag_key}\"]}'"
+  value       = "aws ssm start-automation-execution --document-name ${aws_ssm_document.this.name} --parameters '{\"TableName\":[\"<TABLE_NAME>\"],\"Action\":[\"encrypt\"],\"AutomationAssumeRole\":[\"${aws_iam_role.ssm_automation.arn}\"],\"KmsKeyArn\":[\"${local.effective_kms_key_arn}\"],\"ExcludedResourceIds\":[],\"AssessmentTagKey\":[\"${var.assessment_tag_key}\"]}'"
 }

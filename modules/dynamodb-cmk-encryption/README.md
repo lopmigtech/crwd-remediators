@@ -6,6 +6,19 @@ Detects DynamoDB tables not encrypted with a customer-managed KMS key and provid
 
 **GovCloud compatibility:** both partitions
 
+## Usage
+
+```hcl
+module "dynamodb_cmk_encryption" {
+  source = "git::https://gitlab.com/lopmig.tech/crwd-remediators.git//modules/dynamodb-cmk-encryption?ref=dynamodb-cmk-encryption/v1.0.0"
+
+  name_prefix = "myteam"
+  # create_kms_key defaults to true; set to false and pass kms_key_arn to bring your own key.
+}
+```
+
+See the [Quick Start](#quick-start-deployment-guide) section below for a full walkthrough, and the [Inputs Reference](#inputs-reference) for all available variables.
+
 ## Architecture
 
 This module deploys the standard crwd-remediator pattern plus an optional KMS key:
