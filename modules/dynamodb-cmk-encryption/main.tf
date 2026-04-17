@@ -113,7 +113,7 @@ resource "aws_config_config_rule" "this" {
 
 data "aws_iam_policy_document" "ssm_assume_role" {
   statement {
-    sid     = "AllowSSMAssume"
+    sid     = "AllowSSMAssumeRole"
     effect  = "Allow"
     actions = ["sts:AssumeRole"]
     principals {

@@ -3,7 +3,8 @@
 *.tfstate
 *.tfstate.backup
 *.tfplan
-.terraform.lock.hcl
+# Lock files are committed at module roots for provider reproducibility; ignored under examples/
+**/examples/**/.terraform.lock.hcl
 
 # OS
 .DS_Store
@@ -16,7 +17,9 @@
 # IDE
 .idea/
 .vscode/
-*.tfplan
+
+# Build artifacts (Lambda zips are built by archive_file at plan time)
+*.zip
 
 # Environment-specific values (never commit)
 terraform.tfvars
