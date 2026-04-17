@@ -110,11 +110,6 @@ resource "aws_config_remediation_configuration" "this" {
     static_value = length(var.excluded_resource_ids) > 0 ? join(",", var.excluded_resource_ids) : " "
   }
 
-  parameter {
-    name         = "InherentExclusionBucket"
-    static_value = var.log_destination_bucket
-  }
-
   automatic                  = var.automatic_remediation
   maximum_automatic_attempts = var.maximum_automatic_attempts
   retry_attempt_seconds      = var.retry_attempt_seconds

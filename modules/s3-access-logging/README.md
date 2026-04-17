@@ -6,6 +6,19 @@ Detects S3 buckets missing server access logging and remediates them by enabling
 
 **GovCloud compatibility:** both partitions
 
+## Usage
+
+```hcl
+module "s3_access_logging" {
+  source = "git::https://gitlab.com/lopmig.tech/crwd-remediators.git//modules/s3-access-logging?ref=s3-access-logging/v1.0.1"
+
+  name_prefix            = "my-project"
+  log_destination_bucket = "my-central-logging-bucket"
+}
+```
+
+See the [Quick Start](#quick-start-deployment-guide) section below for a full walkthrough, and the [Inputs Reference](#inputs-reference) for all available variables.
+
 ## Architecture
 
 This module deploys four AWS resources and wires them together into a detect-and-remediate loop:
@@ -198,7 +211,6 @@ Follow these steps to verify the module works end-to-end in a non-production acc
         TargetBucket=YOUR_LOG_DESTINATION_BUCKET,\
         TargetPrefix=s3-access-logs/,\
         ExcludedResourceIds= ,\
-        InherentExclusionBucket=YOUR_LOG_DESTINATION_BUCKET,\
         AutomationAssumeRole=$(terraform output -raw iam_role_arn)"
    ```
 

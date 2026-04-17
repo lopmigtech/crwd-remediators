@@ -2,6 +2,14 @@
 
 All notable changes to this module are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.1] — 2026-04-17
+
+### Changed
+- Removed the redundant `InherentExclusionBucket` SSM parameter. It always held the same value as `TargetBucket`, so the `CheckExclusion` step now derives the inherent exclusion (skip-if-logging-to-self) directly from `TargetBucket`. The Terraform remediation configuration no longer sets this parameter.
+
+### Breaking (manual-invocation only)
+- Operators invoking the SSM document directly (`aws ssm start-automation-execution`) must no longer pass `InherentExclusionBucket=...`; SSM will reject unknown parameters. The Config-triggered automatic path is unaffected. The README example has been updated.
+
 ## [1.0.0] — 2026-04-09
 
 ### Added

@@ -16,9 +16,6 @@ parameters:
     type: String
     description: "Comma-separated list of bucket names to exempt from remediation (operator-defined). Pass a single space if the list is empty."
     default: " "
-  InherentExclusionBucket:
-    type: String
-    description: "The log destination bucket name — always excluded from remediation to prevent infinite log delivery loops"
   AutomationAssumeRole:
     type: String
     description: "IAM role ARN for SSM Automation to assume"
@@ -33,12 +30,13 @@ mainSteps:
       Script: |
         def handler(events, context):
             bucket_name = events["BucketName"]
-            inherent_exclusion = events.get("InherentExclusionBucket", "").strip()
+            # The log destination bucket must never log to itself — enabling logging
+            # on the destination bucket causes an infinite delivery loop that grows
+            # exponentially and can produce enormous unexpected costs. This is derived
+            # directly from TargetBucket (the module wires the destination bucket there).
+            inherent_exclusion = events.get("TargetBucket", "").strip()
             excluded_raw = events.get("ExcludedResourceIds", "").strip()
 
-            # Inherent exclusion: the log destination bucket must never log to itself.
-            # Enabling logging on the destination bucket causes an infinite delivery loop
-            # that grows exponentially and can produce enormous unexpected costs.
             if inherent_exclusion and bucket_name == inherent_exclusion:
                 return {
                     "action": "skip",
@@ -60,7 +58,7 @@ mainSteps:
             return {"action": "remediate"}
       InputPayload:
         BucketName: "{{ BucketName }}"
-        InherentExclusionBucket: "{{ InherentExclusionBucket }}"
+        TargetBucket: "{{ TargetBucket }}"
         ExcludedResourceIds: "{{ ExcludedResourceIds }}"
     outputs:
       - Name: action
