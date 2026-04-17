@@ -196,6 +196,17 @@ data "aws_iam_policy_document" "ssm_permissions" {
     ]
   }
 
+  # List local policies — required to resolve Config's RESOURCE_ID (policy UUID) to an ARN.
+  # Account-level API; does not support resource-level permissions.
+  statement {
+    sid    = "IAMListPolicies"
+    effect = "Allow"
+    actions = [
+      "iam:ListPolicies",
+    ]
+    resources = ["*"]
+  }
+
   # Tag policies
   statement {
     sid    = "IAMTagPolicies"

@@ -6,6 +6,22 @@ Detects and analyzes IAM customer-managed policies that use `<service>:*` wildca
 
 **GovCloud compatibility:** both partitions
 
+## Usage
+
+```hcl
+module "iam_wildcard_action_policy" {
+  source = "git::https://gitlab.com/lopmig.tech/crwd-remediators.git//modules/iam-wildcard-action-policy?ref=iam-wildcard-action-policy/v1.1.1"
+
+  name_prefix = "prod-security"
+  # Recommended first deployment — see Safety defaults section:
+  # automatic_remediation = true
+  # remediation_action    = "full-analysis"
+  # report_s3_bucket      = "my-security-reports-bucket"
+}
+```
+
+See the [Quick start](#quick-start-deployment-guide) section below for a full walkthrough, and the [Inputs reference](#inputs-reference) for all available variables.
+
 ## Architecture
 
 This module creates the following resources:

@@ -2,6 +2,17 @@
 
 All notable changes to this module are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.1] — 2026-04-17
+
+### Fixed
+- **Config-triggered auto-remediation was broken.** `aws_config_remediation_configuration` passes `RESOURCE_ID` as the `ResourceId` SSM parameter; for `AWS::IAM::Policy`, Config's `resourceId` is the policy UUID (e.g., `ANPAI...`), not the ARN. The SSM document's Python handlers called IAM APIs (`iam.get_policy`, `iam.list_policy_tags`, etc.) with this value as `PolicyArn`, which would fail with `ValidationError` on every Config-triggered execution. Manual invocations with a full ARN still worked, but the automatic path never did.
+  - `CheckExclusion` now resolves the input to an ARN via `iam.list_policies(Scope='Local')` and exposes the resolved ARN as a step output.
+  - `ReadPolicyAndAnalyze` consumes the resolved ARN via `InputPayload: PolicyArn: "{{ CheckExclusion.policy_arn }}"` and falls back to `ResourceId` for manual-invocation compatibility.
+  - SSM automation role's `ssm_permissions` policy adds `iam:ListPolicies` (account-level API; `resources = ["*"]`).
+
+### Changed
+- Silent `except Exception: pass` blocks in the SSM document's inline Python (service-last-accessed lookup, both CloudTrail lookup passes, existing-tag read, flap-date parse) now log a `WARN` line so failures surface in SSM execution output instead of disappearing.
+
 ## [1.1.0] — 2026-04-15
 
 ### Added

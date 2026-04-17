@@ -81,51 +81,69 @@ mainSteps:
         import boto3
         import datetime
 
+        def resolve_policy_arn(resource_id, iam_client):
+            # Config's RESOURCE_ID substitution passes the policy UUID (e.g. "ANPAI...")
+            # for AWS::IAM::Policy, not the ARN. Manual invocations may pass a full ARN.
+            # Resolve to ARN since IAM APIs require it.
+            if resource_id.startswith("arn:"):
+                return resource_id
+            paginator = iam_client.get_paginator("list_policies")
+            for page in paginator.paginate(Scope="Local"):
+                for p in page.get("Policies", []):
+                    if p.get("PolicyId") == resource_id:
+                        return p.get("Arn")
+            return None
+
         def handler(events, context):
             resource_id = events["ResourceId"]
             excluded = events.get("ExcludedResourceIds") or []
 
-            # Existing: list-based exclusion
-            if resource_id in excluded:
-                return {"action": "skip", "reason": f"{resource_id} is in the exclusion list"}
+            iam = boto3.client("iam")
+            policy_arn = resolve_policy_arn(resource_id, iam)
+            if not policy_arn:
+                print(f"WARN: could not resolve {resource_id} to a policy ARN - skipping")
+                return {"action": "skip", "reason": f"could not resolve {resource_id} to policy ARN", "policy_arn": ""}
 
-            # New: tag-based exclusion
+            # List-based exclusion (matches on either ARN or policy ID for backward compatibility)
+            if resource_id in excluded or policy_arn in excluded:
+                return {"action": "skip", "reason": f"{policy_arn} is in the exclusion list", "policy_arn": policy_arn}
+
+            # Tag-based exclusion
             if events.get("TagBasedExemptionEnabled", "false").lower() != "true":
-                return {"action": "remediate"}
+                return {"action": "remediate", "policy_arn": policy_arn}
 
             exemption_tag_key = events.get("ExemptionTagKey", "CrwdRemediatorExempt")
             require_reason = events.get("RequireExemptionReason", "true").lower() == "true"
 
-            iam = boto3.client("iam")
             try:
-                tags_resp = iam.list_policy_tags(PolicyArn=resource_id)
+                tags_resp = iam.list_policy_tags(PolicyArn=policy_arn)
                 tag_map = {t["Key"]: t["Value"] for t in tags_resp.get("Tags", [])}
             except Exception as e:
-                print(f"WARN: tag lookup failed on {resource_id}: {e} - proceeding with remediation")
-                return {"action": "remediate", "reason": f"tag lookup failed: {e}"}
+                print(f"WARN: tag lookup failed on {policy_arn}: {e} - proceeding with remediation")
+                return {"action": "remediate", "reason": f"tag lookup failed: {e}", "policy_arn": policy_arn}
 
             exempt_value = tag_map.get(exemption_tag_key, "").lower()
             if exempt_value != "true":
-                return {"action": "remediate"}
+                return {"action": "remediate", "policy_arn": policy_arn}
 
             if require_reason:
                 reason = tag_map.get("CrwdRemediatorExemptReason", "").strip()
                 if not reason:
-                    print(f"WARN: exemption tag on {resource_id} has no reason - ignoring exemption")
-                    return {"action": "remediate", "reason": "exemption missing required reason tag"}
+                    print(f"WARN: exemption tag on {policy_arn} has no reason - ignoring exemption")
+                    return {"action": "remediate", "reason": "exemption missing required reason tag", "policy_arn": policy_arn}
 
             expiry = tag_map.get("CrwdRemediatorExemptExpiry", "")
             if expiry:
                 try:
                     expiry_dt = datetime.datetime.strptime(expiry, "%Y-%m-%d") + datetime.timedelta(days=1)
-                    if datetime.datetime.utcnow() > expiry_dt:
-                        return {"action": "remediate", "reason": f"exemption expired on {expiry}"}
+                    if datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) > expiry_dt:
+                        return {"action": "remediate", "reason": f"exemption expired on {expiry}", "policy_arn": policy_arn}
                 except ValueError:
                     # Invalid expiry format on a human-applied exemption - fail open (treat as no expiry)
-                    pass
+                    print(f"WARN: exemption expiry on {policy_arn} has invalid format {expiry!r} - treating as no expiry")
 
             reason = tag_map.get("CrwdRemediatorExemptReason", "exempt via tag")
-            return {"action": "skip", "reason": reason}
+            return {"action": "skip", "reason": reason, "policy_arn": policy_arn}
       InputPayload:
         ResourceId: "{{ ResourceId }}"
         ExcludedResourceIds: "{{ ExcludedResourceIds }}"
@@ -135,6 +153,9 @@ mainSteps:
     outputs:
       - Name: action
         Selector: $.Payload.action
+        Type: String
+      - Name: policy_arn
+        Selector: $.Payload.policy_arn
         Type: String
 
   - name: BranchOnExclusion
@@ -159,7 +180,9 @@ mainSteps:
 
 
         def handler(events, context):
-            policy_arn = events["ResourceId"]
+            # Prefer the ARN resolved by CheckExclusion; fall back to ResourceId for
+            # manual invocations that already pass a full ARN.
+            policy_arn = events.get("PolicyArn") or events["ResourceId"]
             action_mode = events["Action"]
             lookback_days = int(events.get("CloudTrailLookbackDays", "90"))
             min_threshold = int(events.get("MinActionsThreshold", "3"))
@@ -272,8 +295,8 @@ mainSteps:
                             elif details["JobStatus"] == "FAILED":
                                 break
                             time.sleep(2)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"WARN: service-last-accessed lookup failed for role {role_name}: {e}")
 
                 if last_accessed_services:
                     tags.append(
@@ -314,8 +337,8 @@ mainSteps:
                                 svc = evt.get("EventSource", "").split(".")[0]
                                 if svc.lower() == service_prefix.lower():
                                     found_actions.add(f"{service_prefix}:{evt.get('EventName', '')}")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"WARN: CloudTrail pass-1 lookup failed for role {role_name}, service {service_prefix}: {e}")
 
                 if len(found_actions) >= action_threshold:
                     return list(found_actions)
@@ -351,8 +374,8 @@ mainSteps:
                         pages_checked += 1
                         if pages_checked >= 20:
                             break
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"WARN: CloudTrail pass-2 lookup failed for service {service_prefix}: {e}")
 
                 return list(found_actions)
 
@@ -430,7 +453,8 @@ mainSteps:
                     existing_tags_resp = iam.list_policy_tags(PolicyArn=policy_arn)
                     existing_tag_map = {t["Key"]: t["Value"] for t in existing_tags_resp.get("Tags", [])}
                     prior_scoped_date = existing_tag_map.get("ScopedDate")
-                except Exception:
+                except Exception as e:
+                    print(f"WARN: existing-tag read failed on {policy_arn}: {e} - treating as no prior tags")
                     existing_tag_map = {}
 
                 flap_window_days = int(events.get("FlapWindowDays", "7"))
@@ -453,6 +477,7 @@ mainSteps:
                             flap_count = 1
                             flap_tags.append({"Key": "FlapCount", "Value": "1"})
                     except ValueError:
+                        print(f"WARN: ScopedDate on {policy_arn} has invalid format {prior_scoped_date!r} - resetting flap count")
                         flap_count = 1
                         flap_tags.append({"Key": "FlapCount", "Value": "1"})
                 else:
@@ -565,6 +590,7 @@ mainSteps:
             return result
       InputPayload:
         ResourceId: "{{ ResourceId }}"
+        PolicyArn: "{{ CheckExclusion.policy_arn }}"
         Action: "{{ Action }}"
         CloudTrailLookbackDays: "{{ CloudTrailLookbackDays }}"
         MinActionsThreshold: "{{ MinActionsThreshold }}"
