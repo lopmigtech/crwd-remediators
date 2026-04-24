@@ -23,3 +23,7 @@
 
 # Environment-specific values (never commit)
 terraform.tfvars
+
+# Python
+__pycache__/
+*.pyc

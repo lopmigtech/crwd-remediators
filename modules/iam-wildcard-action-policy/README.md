@@ -47,6 +47,8 @@ Custom Lambda ──evaluates──> AWS Config Rule ──triggers──> Remed
 | `full-analysis` | Analyze + suggest in one pass — categorize, tag, query CloudTrail, and write S3 report | No | Yes | **Recommended for most deployments.** Complete visibility in a single evaluation |
 | `scope-simple` | Auto-replace single-wildcard policies using CloudTrail-discovered actions | **Yes — creates a new policy version** | Caution | After reviewing `full-analysis` results and confirming Simple policies are safe to auto-scope |
 
+Operator tooling: [`dashboard/`](dashboard/) turns `full-analysis` tag output into a standalone HTML dashboard for stakeholders — works without `report_s3_bucket`.
+
 ### Policy categories
 
 The module categorizes each non-compliant policy based on the number of distinct `<service>:*` wildcard services it contains. The category determines which remediation tools are available and how much effort is required to fix it.

@@ -2,6 +2,11 @@
 
 All notable changes to this module are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- `dashboard/` operator tooling: Python CLI that automates runbook Steps 3–6 (start SSM `full-analysis`, wait, scan fleet IAM tags, pull per-policy detail) and renders a standalone HTML dashboard for stakeholders. Works on deployments without an S3 report bucket — reads everything from Config, SSM, and IAM policy tags. Subcommands: `start`, `watch`, `collect`, `run`, `render`. Offline-renderable from a JSON fixture for CI.
+
 ## [1.1.1] — 2026-04-17
 
 ### Fixed
