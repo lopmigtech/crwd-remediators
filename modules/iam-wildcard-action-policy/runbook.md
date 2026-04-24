@@ -74,6 +74,10 @@ If you see `^M` anywhere in the output, CRLF pollution has already occurred. Cle
 
 ---
 
+> **Faster path for stakeholders:** `dashboard/dashboard.py` automates Steps 3–6 and writes a shareable HTML report. Use this runbook when you need step-level control; use the dashboard when you want the same data in a single command. See [`dashboard/README.md`](dashboard/README.md).
+
+---
+
 ## Step 1 — Force Config to evaluate the fleet
 
 Config re-evaluates every 24 hours on its own, but you can trigger it immediately:

@@ -1,0 +1,217 @@
+{
+  "generated_at": "2026-04-24 18:00:00 UTC",
+  "config_rule": "automation-iam-wildcard-action-policy",
+  "account_id": "014280747320",
+  "region": "us-gov-west-1",
+  "totals": {
+    "noncompliant": 8,
+    "analyzed": 6,
+    "pending_analysis": 2,
+    "exempt": 1,
+    "flapping": 1,
+    "category_simple": 3,
+    "category_moderate": 2,
+    "category_complex": 1
+  },
+  "by_category": {
+    "Simple": 3,
+    "Moderate": 2,
+    "Complex": 1
+  },
+  "services": {
+    "ssm":   { "total": 2, "ready": 1, "review": 1 },
+    "s3":    { "total": 2, "ready": 0, "review": 2 },
+    "ec2":   { "total": 3, "ready": 0, "review": 3 },
+    "lambda":{ "total": 1, "ready": 0, "review": 1 },
+    "iam":   { "total": 1, "ready": 0, "review": 1 },
+    "artifact": { "total": 1, "ready": 1, "review": 0 }
+  },
+  "analyzed": [
+    {
+      "policy_arn": "arn:aws-us-gov:iam::014280747320:policy/app-parameter-reader",
+      "policy_name": "app-parameter-reader",
+      "policy_id": "ANPAIABCDEF123456789",
+      "WildcardCategory": "Simple",
+      "WildcardServices": "ssm",
+      "AttachedTo": "role/lambda-app-execution-role",
+      "LastAccessedServices": "ssm+logs",
+      "SuggestedFix": "ssm=GetParameter+GetParameters+GetParametersByPath",
+      "SuggestDate": "2026-04-24T14:32:15Z",
+      "LastEvaluated": "2026-04-24T14:32:15Z",
+      "PreviousVersion": "",
+      "NeedsManualReview": "",
+      "FlapLastDetected": "",
+      "CrwdRemediatorExempt": "",
+      "CrwdRemediatorExemptReason": "",
+      "CrwdRemediatorExemptExpiry": ""
+    },
+    {
+      "policy_arn": "arn:aws-us-gov:iam::014280747320:policy/artifact-reader",
+      "policy_name": "artifact-reader",
+      "policy_id": "ANPAIZZ222222222222",
+      "WildcardCategory": "Simple",
+      "WildcardServices": "artifact",
+      "AttachedTo": "role/ci-runner",
+      "LastAccessedServices": "artifact",
+      "SuggestedFix": "artifact=GetReport+ListReports",
+      "SuggestDate": "2026-04-24T14:34:00Z",
+      "LastEvaluated": "2026-04-24T14:34:00Z",
+      "PreviousVersion": "",
+      "NeedsManualReview": "",
+      "FlapLastDetected": "",
+      "CrwdRemediatorExempt": "",
+      "CrwdRemediatorExemptReason": "",
+      "CrwdRemediatorExemptExpiry": ""
+    },
+    {
+      "policy_arn": "arn:aws-us-gov:iam::014280747320:policy/ec2-describe-only",
+      "policy_name": "ec2-describe-only",
+      "policy_id": "ANPAIEC2DESC33333333",
+      "WildcardCategory": "Simple",
+      "WildcardServices": "ec2",
+      "AttachedTo": "role/deployer",
+      "LastAccessedServices": "",
+      "SuggestedFix": "ec2=no-data",
+      "SuggestDate": "2026-04-24T14:35:00Z",
+      "LastEvaluated": "2026-04-24T14:35:00Z",
+      "PreviousVersion": "",
+      "NeedsManualReview": "true",
+      "FlapLastDetected": "",
+      "CrwdRemediatorExempt": "",
+      "CrwdRemediatorExemptReason": "",
+      "CrwdRemediatorExemptExpiry": ""
+    },
+    {
+      "policy_arn": "arn:aws-us-gov:iam::014280747320:policy/data-access",
+      "policy_name": "data-access",
+      "policy_id": "ANPAIDATAMOD44444444",
+      "WildcardCategory": "Moderate",
+      "WildcardServices": "s3+ec2",
+      "AttachedTo": "role/data-worker",
+      "LastAccessedServices": "s3",
+      "SuggestedFix": "s3=GetObject+ListBucket/ec2=DescribeInstances",
+      "SuggestDate": "2026-04-24T14:36:00Z",
+      "LastEvaluated": "2026-04-24T14:36:00Z",
+      "PreviousVersion": "",
+      "NeedsManualReview": "",
+      "FlapLastDetected": "",
+      "CrwdRemediatorExempt": "",
+      "CrwdRemediatorExemptReason": "",
+      "CrwdRemediatorExemptExpiry": ""
+    },
+    {
+      "policy_arn": "arn:aws-us-gov:iam::014280747320:policy/observability",
+      "policy_name": "observability",
+      "policy_id": "ANPAIOBSMOD55555555",
+      "WildcardCategory": "Moderate",
+      "WildcardServices": "logs+cloudwatch",
+      "AttachedTo": "role/monitoring",
+      "LastAccessedServices": "logs+cloudwatch",
+      "SuggestedFix": "logs=CreateLogGroup+PutLogEvents/cloudwatch=PutMetricData",
+      "SuggestDate": "2026-04-24T14:37:00Z",
+      "LastEvaluated": "2026-04-24T14:37:00Z",
+      "PreviousVersion": "",
+      "NeedsManualReview": "",
+      "FlapLastDetected": "2026-04-20T02:00:00Z",
+      "CrwdRemediatorExempt": "",
+      "CrwdRemediatorExemptReason": "",
+      "CrwdRemediatorExemptExpiry": ""
+    },
+    {
+      "policy_arn": "arn:aws-us-gov:iam::014280747320:policy/legacy-poweruser",
+      "policy_name": "legacy-poweruser",
+      "policy_id": "ANPAILEGCPLX66666666",
+      "WildcardCategory": "Complex",
+      "WildcardServices": "ssm+s3+ec2+iam+lambda",
+      "AttachedTo": "role/shared-services",
+      "LastAccessedServices": "s3+ec2+lambda",
+      "SuggestedFix": "ssm=no-data/s3=GetObject+ListBucket/ec2=DescribeInstances/iam=no-data/lambda=InvokeFunction",
+      "SuggestDate": "2026-04-24T14:38:00Z",
+      "LastEvaluated": "2026-04-24T14:38:00Z",
+      "PreviousVersion": "",
+      "NeedsManualReview": "",
+      "FlapLastDetected": "",
+      "CrwdRemediatorExempt": "",
+      "CrwdRemediatorExemptReason": "",
+      "CrwdRemediatorExemptExpiry": ""
+    }
+  ],
+  "pending": [
+    { "resource_id": "ANPAIPENDING777777", "annotation": "Contains wildcard action for service(s): sns" },
+    { "resource_id": "ANPAIPENDING888888", "annotation": "Contains wildcard action for service(s): sqs" }
+  ],
+  "exempt": [
+    {
+      "policy_arn": "arn:aws-us-gov:iam::014280747320:policy/break-glass",
+      "policy_name": "break-glass",
+      "policy_id": "ANPAIBREAKGLASS999",
+      "WildcardCategory": "",
+      "WildcardServices": "polly",
+      "AttachedTo": "role/incident-responder",
+      "LastAccessedServices": "",
+      "SuggestedFix": "",
+      "SuggestDate": "",
+      "LastEvaluated": "",
+      "PreviousVersion": "",
+      "NeedsManualReview": "",
+      "FlapLastDetected": "",
+      "CrwdRemediatorExempt": "true",
+      "CrwdRemediatorExemptReason": "legit break-glass policy — approved by SecEng ticket SEC-4210",
+      "CrwdRemediatorExemptExpiry": "2026-12-31"
+    }
+  ],
+  "flapping": [
+    {
+      "policy_arn": "arn:aws-us-gov:iam::014280747320:policy/observability",
+      "policy_name": "observability",
+      "policy_id": "ANPAIOBSMOD55555555",
+      "WildcardCategory": "Moderate",
+      "WildcardServices": "logs+cloudwatch",
+      "AttachedTo": "role/monitoring",
+      "LastAccessedServices": "logs+cloudwatch",
+      "SuggestedFix": "logs=CreateLogGroup+PutLogEvents/cloudwatch=PutMetricData",
+      "SuggestDate": "2026-04-24T14:37:00Z",
+      "LastEvaluated": "2026-04-24T14:37:00Z",
+      "PreviousVersion": "",
+      "NeedsManualReview": "",
+      "FlapLastDetected": "2026-04-20T02:00:00Z",
+      "CrwdRemediatorExempt": "",
+      "CrwdRemediatorExemptReason": "",
+      "CrwdRemediatorExemptExpiry": ""
+    }
+  ],
+  "unused": [
+    {
+      "policy_arn": "arn:aws-us-gov:iam::014280747320:policy/legacy-poweruser",
+      "policy_name": "legacy-poweruser",
+      "policy_id": "ANPAILEGCPLX66666666",
+      "WildcardCategory": "Complex",
+      "WildcardServices": "ssm+s3+ec2+iam+lambda",
+      "AttachedTo": "role/shared-services",
+      "LastAccessedServices": "s3+ec2+lambda",
+      "SuggestedFix": "ssm=no-data/s3=GetObject+ListBucket/ec2=DescribeInstances/iam=no-data/lambda=InvokeFunction",
+      "_unused_wildcards": ["iam", "ssm"]
+    }
+  ],
+  "executions": {
+    "12345678-1234-1234-1234-123456789012": {
+      "policy_id": "ANPAIABCDEF123456789",
+      "execution_id": "12345678-1234-1234-1234-123456789012",
+      "status": "Success",
+      "duration_s": 42
+    },
+    "abcdef01-1234-1234-1234-abcdef012345": {
+      "policy_id": "ANPAIDATAMOD44444444",
+      "execution_id": "abcdef01-1234-1234-1234-abcdef012345",
+      "status": "Failed",
+      "duration_s": 18,
+      "failure_reason": "ReadPolicyAndAnalyze: throttled by CloudTrail LookupEvents"
+    },
+    "98765432-abcd-efgh-ijkl-987654321098": {
+      "policy_id": "ANPAIOBSMOD55555555",
+      "execution_id": "98765432-abcd-efgh-ijkl-987654321098",
+      "status": "Success",
+      "duration_s": 55
+    }
+  }
+}
