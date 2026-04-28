@@ -74,3 +74,114 @@ resource "aws_s3_bucket_logging" "dashboard" {
   target_bucket = var.access_log_bucket
   target_prefix = "${local.resource_prefix}/"
 }
+
+# -----------------------------------------------------------------------------
+# Refresh Lambda — scheduled, read-only, renders dashboard.html to S3
+# -----------------------------------------------------------------------------
+
+data "archive_file" "refresh" {
+  type        = "zip"
+  source_dir  = "${path.module}/lambda/refresh"
+  output_path = "${path.module}/build/refresh.zip"
+  excludes    = ["test_handler.py", "__pycache__"]
+}
+
+data "aws_iam_policy_document" "refresh_assume_role" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "refresh" {
+  name               = "${local.resource_prefix}-refresh"
+  assume_role_policy = data.aws_iam_policy_document.refresh_assume_role.json
+  tags               = var.tags
+}
+
+data "aws_iam_policy_document" "refresh" {
+  statement {
+    sid    = "ReadConfigComplianceDetails"
+    effect = "Allow"
+    actions = [
+      "config:GetComplianceDetailsByConfigRule",
+    ]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:config:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:config-rule/${var.config_rule_name}",
+    ]
+  }
+
+  statement {
+    sid     = "ListIAMPolicies"
+    effect  = "Allow"
+    actions = ["iam:ListPolicies"]
+    # iam:ListPolicies does not support resource-level permissions; AWS requires "*".
+    resources = ["*"]
+  }
+
+  statement {
+    sid     = "ReadIAMPolicyTags"
+    effect  = "Allow"
+    actions = ["iam:ListPolicyTags"]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/*",
+    ]
+  }
+
+  statement {
+    sid       = "GetCallerIdentity"
+    effect    = "Allow"
+    actions   = ["sts:GetCallerIdentity"]
+    resources = ["*"] # AWS does not support resource-level perms for this action.
+  }
+
+  statement {
+    sid       = "WriteDashboardObject"
+    effect    = "Allow"
+    actions   = ["s3:PutObject"]
+    resources = ["${local.bucket_arn}/dashboard.html"]
+  }
+
+  statement {
+    sid    = "WriteOwnLogs"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${local.resource_prefix}-refresh:*",
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "refresh" {
+  name   = "${local.resource_prefix}-refresh"
+  role   = aws_iam_role.refresh.id
+  policy = data.aws_iam_policy_document.refresh.json
+}
+
+resource "aws_lambda_function" "refresh" {
+  function_name    = "${local.resource_prefix}-refresh"
+  filename         = data.archive_file.refresh.output_path
+  source_code_hash = data.archive_file.refresh.output_base64sha256
+  role             = aws_iam_role.refresh.arn
+  handler          = "handler.lambda_handler"
+  runtime          = "python3.12"
+  memory_size      = 512
+  timeout          = 300
+
+  environment {
+    variables = {
+      CONFIG_RULE_NAME      = var.config_rule_name
+      DASHBOARD_BUCKET      = aws_s3_bucket.dashboard.id
+      EXCLUDED_RESOURCE_IDS = join(",", var.excluded_resource_ids)
+    }
+  }
+
+  tags = var.tags
+}

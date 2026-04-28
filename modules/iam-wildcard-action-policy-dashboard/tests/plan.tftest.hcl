@@ -4,7 +4,7 @@ variables {
 }
 
 run "plan_resources" {
-  command = apply
+  command = plan
 
   assert {
     condition     = aws_s3_bucket.dashboard.bucket != ""
@@ -22,7 +22,7 @@ run "plan_resources" {
   }
 
   assert {
-    condition     = try(one(aws_s3_bucket_server_side_encryption_configuration.dashboard.rule).apply_server_side_encryption_by_default[0].sse_algorithm, null) == "AES256"
+    condition     = one(aws_s3_bucket_server_side_encryption_configuration.dashboard.rule).apply_server_side_encryption_by_default[0].sse_algorithm == "AES256"
     error_message = "S3 bucket must have SSE-S3 (AES256) default encryption"
   }
 
@@ -39,5 +39,23 @@ run "plan_resources" {
   assert {
     condition     = length(aws_s3_bucket_logging.dashboard) == (var.access_log_bucket == null ? 0 : 1)
     error_message = "Server-access logging must be configured if access_log_bucket is set, and absent otherwise"
+  }
+
+  assert {
+    condition     = aws_lambda_function.refresh.runtime == "python3.12"
+    error_message = "Refresh Lambda must use python3.12 runtime"
+  }
+
+  assert {
+    condition     = aws_lambda_function.refresh.timeout == 300 && aws_lambda_function.refresh.memory_size == 512
+    error_message = "Refresh Lambda must use 512 MB memory and 5 min timeout"
+  }
+
+  assert {
+    condition = length([
+      for s in jsondecode(data.aws_iam_policy_document.refresh.json).Statement :
+      s if can(regex("ssm:|iam:Tag|iam:Untag|iam:PassRole|^\\*$", join(",", flatten([s.Action]))))
+    ]) == 0
+    error_message = "Refresh role must not include any ssm:*, iam:Tag*, iam:Untag*, iam:PassRole, or wildcard actions"
   }
 }
