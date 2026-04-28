@@ -110,8 +110,13 @@ data "aws_iam_policy_document" "refresh" {
     actions = [
       "config:GetComplianceDetailsByConfigRule",
     ]
+    # Config rule ARNs contain the rule's auto-generated ID (a UUID-like string),
+    # not the human-readable name in var.config_rule_name. Since the ID isn't
+    # known at module-deploy time without a data-source lookup, scope to any
+    # rule in this account/region. The action is read-only and the Lambda code
+    # only ever queries var.config_rule_name.
     resources = [
-      "arn:${data.aws_partition.current.partition}:config:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:config-rule/${var.config_rule_name}",
+      "arn:${data.aws_partition.current.partition}:config:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:config-rule/*",
     ]
   }
 
