@@ -76,4 +76,9 @@ run "plan_resources" {
     ]) == 0
     error_message = "Redirect role must not include any config:*, iam:*, ssm:*, s3:PutObject, s3:Delete*, or wildcard actions"
   }
+
+  assert {
+    condition     = aws_cloudwatch_event_rule.refresh_schedule.schedule_expression == "rate(${var.refresh_schedule_minutes} minutes)"
+    error_message = "EventBridge schedule must match var.refresh_schedule_minutes"
+  }
 }

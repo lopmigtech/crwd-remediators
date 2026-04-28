@@ -254,3 +254,28 @@ resource "aws_lambda_function_url" "redirect" {
   function_name      = aws_lambda_function.redirect.function_name
   authorization_type = "AWS_IAM"
 }
+
+# -----------------------------------------------------------------------------
+# EventBridge schedule — invokes the refresh Lambda every N minutes
+# -----------------------------------------------------------------------------
+
+resource "aws_cloudwatch_event_rule" "refresh_schedule" {
+  name                = "${local.resource_prefix}-schedule"
+  description         = "Periodically invoke the iam-wildcard-action-policy dashboard refresh Lambda"
+  schedule_expression = "rate(${var.refresh_schedule_minutes} minutes)"
+  tags                = var.tags
+}
+
+resource "aws_cloudwatch_event_target" "refresh_schedule" {
+  rule      = aws_cloudwatch_event_rule.refresh_schedule.name
+  target_id = "refresh-lambda"
+  arn       = aws_lambda_function.refresh.arn
+}
+
+resource "aws_lambda_permission" "refresh_schedule" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.refresh.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.refresh_schedule.arn
+}
