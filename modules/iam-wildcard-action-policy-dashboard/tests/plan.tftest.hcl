@@ -58,4 +58,22 @@ run "plan_resources" {
     ]) == 0
     error_message = "Refresh role must not include any ssm:*, iam:Tag*, iam:Untag*, iam:PassRole, or wildcard actions"
   }
+
+  assert {
+    condition     = aws_lambda_function.redirect.runtime == "python3.12"
+    error_message = "Redirect Lambda must use python3.12 runtime"
+  }
+
+  assert {
+    condition     = aws_lambda_function_url.redirect.authorization_type == "AWS_IAM"
+    error_message = "Lambda Function URL must use AWS_IAM authorization (never NONE)"
+  }
+
+  assert {
+    condition = length([
+      for s in jsondecode(data.aws_iam_policy_document.redirect.json).Statement :
+      s if can(regex("config:|iam:|ssm:|s3:PutObject|s3:Delete|^\\*$", join(",", flatten([s.Action]))))
+    ]) == 0
+    error_message = "Redirect role must not include any config:*, iam:*, ssm:*, s3:PutObject, s3:Delete*, or wildcard actions"
+  }
 }

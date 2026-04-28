@@ -185,3 +185,72 @@ resource "aws_lambda_function" "refresh" {
 
   tags = var.tags
 }
+
+# -----------------------------------------------------------------------------
+# Redirect Lambda — fronted by Function URL with AWS_IAM auth
+# -----------------------------------------------------------------------------
+
+data "archive_file" "redirect" {
+  type        = "zip"
+  source_dir  = "${path.module}/lambda/redirect"
+  output_path = "${path.module}/build/redirect.zip"
+  excludes    = ["test_handler.py", "__pycache__"]
+}
+
+resource "aws_iam_role" "redirect" {
+  name               = "${local.resource_prefix}-redirect"
+  assume_role_policy = data.aws_iam_policy_document.refresh_assume_role.json # same trust
+  tags               = var.tags
+}
+
+data "aws_iam_policy_document" "redirect" {
+  statement {
+    sid       = "ReadDashboardObject"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${local.bucket_arn}/dashboard.html"]
+  }
+
+  statement {
+    sid    = "WriteOwnLogs"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${local.resource_prefix}-redirect:*",
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "redirect" {
+  name   = "${local.resource_prefix}-redirect"
+  role   = aws_iam_role.redirect.id
+  policy = data.aws_iam_policy_document.redirect.json
+}
+
+resource "aws_lambda_function" "redirect" {
+  function_name    = "${local.resource_prefix}-redirect"
+  filename         = data.archive_file.redirect.output_path
+  source_code_hash = data.archive_file.redirect.output_base64sha256
+  role             = aws_iam_role.redirect.arn
+  handler          = "handler.lambda_handler"
+  runtime          = "python3.12"
+  memory_size      = 128
+  timeout          = 10
+
+  environment {
+    variables = {
+      DASHBOARD_BUCKET      = aws_s3_bucket.dashboard.id
+      PRESIGNED_TTL_SECONDS = tostring(var.presigned_url_ttl_seconds)
+    }
+  }
+
+  tags = var.tags
+}
+
+resource "aws_lambda_function_url" "redirect" {
+  function_name      = aws_lambda_function.redirect.function_name
+  authorization_type = "AWS_IAM"
+}
