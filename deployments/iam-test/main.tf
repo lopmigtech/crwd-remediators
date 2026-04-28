@@ -327,3 +327,39 @@ output "test_policy_arns" {
     tag_exempt_no_reason = aws_iam_policy.tag_exempt_no_reason.arn
   }
 }
+
+# =============================================================================
+# Dashboard — live validation of iam-wildcard-action-policy-dashboard module
+# =============================================================================
+
+module "iam_wildcard_dashboard" {
+  source = "../../modules/iam-wildcard-action-policy-dashboard"
+
+  name_prefix               = local.prefix
+  config_rule_name          = module.iam_wildcard_action_policy.config_rule_name
+  refresh_schedule_minutes  = 5 # faster refresh during testing
+  presigned_url_ttl_seconds = 3600
+  log_retention_days        = 7
+
+  tags = {
+    Project     = "crwd-remediators-live-test"
+    Environment = "test"
+    ManagedBy   = "Terraform"
+  }
+}
+
+output "dashboard_url" {
+  value = module.iam_wildcard_dashboard.dashboard_url
+}
+
+output "dashboard_bucket_name" {
+  value = module.iam_wildcard_dashboard.bucket_name
+}
+
+output "dashboard_refresh_lambda_function_name" {
+  value = module.iam_wildcard_dashboard.refresh_lambda_function_name
+}
+
+output "dashboard_redirect_lambda_function_name" {
+  value = module.iam_wildcard_dashboard.redirect_lambda_function_name
+}
