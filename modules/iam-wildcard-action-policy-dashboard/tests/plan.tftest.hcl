@@ -20,4 +20,9 @@ run "plan_resources" {
     )
     error_message = "All four Block Public Access flags must be enabled on the dashboard bucket"
   }
+
+  assert {
+    condition     = try(one(aws_s3_bucket_server_side_encryption_configuration.dashboard.rule).apply_server_side_encryption_by_default[0].sse_algorithm, null) == "AES256"
+    error_message = "S3 bucket must have SSE-S3 (AES256) default encryption"
+  }
 }
