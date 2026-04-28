@@ -65,3 +65,11 @@ resource "aws_s3_bucket_policy" "dashboard" {
   bucket = aws_s3_bucket.dashboard.id
   policy = data.aws_iam_policy_document.dashboard_bucket.json
 }
+
+resource "aws_s3_bucket_logging" "dashboard" {
+  count = var.access_log_bucket != null ? 1 : 0
+
+  bucket        = aws_s3_bucket.dashboard.id
+  target_bucket = var.access_log_bucket
+  target_prefix = "${local.resource_prefix}/"
+}

@@ -35,4 +35,9 @@ run "plan_resources" {
     condition     = length(regexall("aws:SecureTransport", data.aws_iam_policy_document.dashboard_bucket.json)) > 0
     error_message = "Bucket policy must include a Deny statement on aws:SecureTransport=false"
   }
+
+  assert {
+    condition     = length(aws_s3_bucket_logging.dashboard) == (var.access_log_bucket == null ? 0 : 1)
+    error_message = "Server-access logging must be configured if access_log_bucket is set, and absent otherwise"
+  }
 }
