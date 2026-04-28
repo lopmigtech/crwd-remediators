@@ -4,7 +4,7 @@ variables {
 }
 
 run "plan_resources" {
-  command = plan
+  command = apply
 
   assert {
     condition     = aws_s3_bucket.dashboard.bucket != ""
@@ -29,5 +29,10 @@ run "plan_resources" {
   assert {
     condition     = aws_s3_bucket_versioning.dashboard.versioning_configuration[0].status == "Enabled"
     error_message = "S3 bucket versioning must be enabled"
+  }
+
+  assert {
+    condition     = length(regexall("aws:SecureTransport", data.aws_iam_policy_document.dashboard_bucket.json)) > 0
+    error_message = "Bucket policy must include a Deny statement on aws:SecureTransport=false"
   }
 }

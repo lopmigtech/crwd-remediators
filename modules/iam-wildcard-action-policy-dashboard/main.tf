@@ -39,3 +39,29 @@ resource "aws_s3_bucket_versioning" "dashboard" {
     status = "Enabled"
   }
 }
+
+data "aws_iam_policy_document" "dashboard_bucket" {
+  statement {
+    sid     = "DenyInsecureTransport"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.dashboard.arn,
+      "${aws_s3_bucket.dashboard.arn}/*",
+    ]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "dashboard" {
+  bucket = aws_s3_bucket.dashboard.id
+  policy = data.aws_iam_policy_document.dashboard_bucket.json
+}
