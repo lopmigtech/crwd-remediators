@@ -25,4 +25,9 @@ run "plan_resources" {
     condition     = try(one(aws_s3_bucket_server_side_encryption_configuration.dashboard.rule).apply_server_side_encryption_by_default[0].sse_algorithm, null) == "AES256"
     error_message = "S3 bucket must have SSE-S3 (AES256) default encryption"
   }
+
+  assert {
+    condition     = aws_s3_bucket_versioning.dashboard.versioning_configuration[0].status == "Enabled"
+    error_message = "S3 bucket versioning must be enabled"
+  }
 }
