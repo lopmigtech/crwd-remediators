@@ -1,6 +1,7 @@
 locals {
   resource_prefix = "${var.name_prefix}-iam-wildcard-dashboard"
   bucket_name     = "${local.resource_prefix}-${data.aws_caller_identity.current.account_id}"
+  bucket_arn      = "arn:${data.aws_partition.current.partition}:s3:::${local.bucket_name}"
 }
 
 # -----------------------------------------------------------------------------
@@ -46,8 +47,8 @@ data "aws_iam_policy_document" "dashboard_bucket" {
     effect  = "Deny"
     actions = ["s3:*"]
     resources = [
-      aws_s3_bucket.dashboard.arn,
-      "${aws_s3_bucket.dashboard.arn}/*",
+      local.bucket_arn,
+      "${local.bucket_arn}/*",
     ]
     principals {
       type        = "*"
