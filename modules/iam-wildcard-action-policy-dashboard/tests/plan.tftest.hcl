@@ -81,4 +81,12 @@ run "plan_resources" {
     condition     = aws_cloudwatch_event_rule.refresh_schedule.schedule_expression == "rate(${var.refresh_schedule_minutes} minutes)"
     error_message = "EventBridge schedule must match var.refresh_schedule_minutes"
   }
+
+  assert {
+    condition = (
+      aws_cloudwatch_log_group.refresh.retention_in_days == var.log_retention_days &&
+      aws_cloudwatch_log_group.redirect.retention_in_days == var.log_retention_days
+    )
+    error_message = "Both Lambda log groups must use var.log_retention_days"
+  }
 }

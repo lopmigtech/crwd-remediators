@@ -279,3 +279,20 @@ resource "aws_lambda_permission" "refresh_schedule" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.refresh_schedule.arn
 }
+
+# -----------------------------------------------------------------------------
+# CloudWatch Logs — explicit log groups with retention (Lambda would auto-create
+# without retention otherwise)
+# -----------------------------------------------------------------------------
+
+resource "aws_cloudwatch_log_group" "refresh" {
+  name              = "/aws/lambda/${aws_lambda_function.refresh.function_name}"
+  retention_in_days = var.log_retention_days
+  tags              = var.tags
+}
+
+resource "aws_cloudwatch_log_group" "redirect" {
+  name              = "/aws/lambda/${aws_lambda_function.redirect.function_name}"
+  retention_in_days = var.log_retention_days
+  tags              = var.tags
+}
