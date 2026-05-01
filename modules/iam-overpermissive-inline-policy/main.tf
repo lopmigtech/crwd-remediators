@@ -176,6 +176,19 @@ resource "aws_iam_role" "ssm_automation" {
 }
 
 data "aws_iam_policy_document" "ssm_permissions" {
+  # List principals — required to resolve Config's RESOURCE_ID (AWS resource ID) to a principal name.
+  # Account-level APIs; do not support resource-level permissions.
+  statement {
+    sid    = "IAMListPrincipals"
+    effect = "Allow"
+    actions = [
+      "iam:ListRoles",
+      "iam:ListUsers",
+      "iam:ListGroups",
+    ]
+    resources = ["*"]
+  }
+
   # Read principal metadata
   statement {
     sid    = "IAMReadPrincipals"

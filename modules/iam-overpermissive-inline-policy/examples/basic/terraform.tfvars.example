@@ -1,0 +1,48 @@
+# terraform.tfvars.example
+# Copy this file to terraform.tfvars and fill in your values.
+# Do NOT commit terraform.tfvars — it contains environment-specific values.
+
+# Required: prefix for all resource names created by this module.
+# Becomes part of the Config rule name, IAM role names, Lambda function name, and SSM doc name.
+name_prefix = "my-project"
+
+# Optional: additional tags applied to all resources.
+# tags = { Environment = "production", Team = "security" }
+
+# Safety: keep false until you have reviewed the analyze tags fleet-wide.
+# When true, AWS Config invokes the SSM document automatically on each
+# non-compliant principal. With remediation_action = "analyze" (default),
+# this only writes findings tags — no policy is mutated.
+automatic_remediation = false
+
+# Optional: composite resource IDs that should never be evaluated.
+# Format: <kind>/<name> (skip the entire principal) or
+# <kind>/<name>#<inline-policy-name> (skip just one inline policy).
+# excluded_resource_ids = [
+#   "role/BreakGlassAdmin",
+#   "user/legacy-admin#FullAccessInline",
+# ]
+
+# v1.0 supports analyze mode only. Mutating modes (backup-only, scope-and-backup,
+# delete-and-backup) ship in a later release.
+# remediation_action = "analyze"
+
+# How often Config re-evaluates all in-scope IAM principals.
+# Options: Off, One_Hour, Three_Hours, Six_Hours, Twelve_Hours, TwentyFour_Hours
+# evaluation_frequency = "TwentyFour_Hours"
+
+# Honor the CrwdRemediatorExempt=true tag on the principal (default on).
+# tag_based_exemption_enabled = true
+
+# Tag key checked on the principal for exemption. Change only to align with
+# existing CRWD tooling conventions.
+# exemption_tag_key = "CrwdRemediatorExempt"
+
+# Require a non-empty CrwdRemediatorExemptReason tag alongside the boolean.
+# Strongly recommended: keep this true to ensure every exemption is auditable.
+# require_exemption_reason = true
+
+# Reserved flags for future mutating modes.
+# enable_role_remediation = true
+# enable_user_remediation = true
+# enable_group_remediation = false  # opt-in due to fan-out blast radius
