@@ -1,0 +1,28 @@
+# terraform.tfvars.example
+# Copy this file to terraform.tfvars and fill in your values.
+
+# Required: prefix for all resource names
+name_prefix = "my-project"
+
+# Optional: tags applied to all resources
+# tags = { Environment = "production", Team = "security" }
+
+# Safety: keep false until reviewing the non-compliance list. The tag-and-route
+# mode is non-mutating (writes severity tags only, no policy changes), so this
+# can be flipped to true earlier than for modules that mutate policies.
+automatic_remediation = false
+
+# v1.0 supports tag-and-route only. Auto-scoping full wildcards from CloudTrail
+# produces low-confidence policies, so the design intentionally does not auto-rewrite.
+# remediation_action = "tag-and-route"
+
+# How often Config re-evaluates all in-scope IAM policies.
+# evaluation_frequency = "TwentyFour_Hours"
+
+# Optional: customer-managed policy ARNs that should never be evaluated.
+# excluded_resource_ids = ["arn:aws:iam::123456789012:policy/AdminPolicy"]
+
+# Tag-based exemption defaults
+# tag_based_exemption_enabled = true
+# exemption_tag_key = "CrwdRemediatorExempt"
+# require_exemption_reason = true
