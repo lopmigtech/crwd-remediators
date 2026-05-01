@@ -1,0 +1,74 @@
+schemaVersion: "0.3"
+description: "Detect inline IAM policies with overly permissive wildcards (Action:* and <service>:*) on roles, users, and groups. v1.0 ships analyze mode (tag-only); mutating modes (backup-only, scope-and-backup, delete-and-backup) follow in a later release."
+assumeRole: "{{ AutomationAssumeRole }}"
+parameters:
+  ResourceId:
+    type: String
+    description: "AWS Config resource ID for the principal under evaluation"
+  AutomationAssumeRole:
+    type: String
+    description: "IAM role ARN for SSM to assume"
+  Action:
+    type: String
+    description: "Operation mode"
+    default: "analyze"
+    allowedValues:
+      - "analyze"
+  ExcludedResourceIds:
+    type: StringList
+    default: []
+    description: "Composite resource IDs (<principal-type>/<name>[#<inline-policy-name>]) to skip"
+  TagBasedExemptionEnabled:
+    type: String
+    default: "true"
+    allowedValues:
+      - "true"
+      - "false"
+    description: "If 'true', CheckExclusion reads principal tags and skips remediation when the exemption tag is present"
+  ExemptionTagKey:
+    type: String
+    default: "CrwdRemediatorExempt"
+    description: "Tag key checked on the principal for exemption"
+  RequireExemptionReason:
+    type: String
+    default: "true"
+    allowedValues:
+      - "true"
+      - "false"
+    description: "If 'true', exemption is only honored when CrwdRemediatorExemptReason tag is non-empty"
+  EnableRoleRemediation:
+    type: String
+    default: "true"
+    allowedValues:
+      - "true"
+      - "false"
+  EnableUserRemediation:
+    type: String
+    default: "true"
+    allowedValues:
+      - "true"
+      - "false"
+  EnableGroupRemediation:
+    type: String
+    default: "false"
+    allowedValues:
+      - "true"
+      - "false"
+mainSteps:
+  - name: AnalyzePrincipal
+    action: aws:executeScript
+    description: "v1.0 placeholder — full analyze logic lands in the next release."
+    inputs:
+      Runtime: python3.11
+      Handler: script_handler
+      InputPayload:
+        ResourceId: "{{ ResourceId }}"
+        Action: "{{ Action }}"
+      Script: |
+        def script_handler(event, context):
+            return {
+                "status": "placeholder",
+                "resource_id": event.get("ResourceId"),
+                "action": event.get("Action"),
+                "note": "analyze logic ships in next release; this step succeeds without mutation",
+            }
