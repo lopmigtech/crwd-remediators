@@ -31,6 +31,9 @@ EventBridge ─▶ Refresh Lambda ─▶ S3 (private, encrypted, versioned)
 | `log_retention_days` | number | | `30` | One of AWS-supported CloudWatch retention values |
 | `access_log_bucket` | string | | `null` | If set, S3 server-access logs go here. If `null`, server-access logging is disabled and consumer accepts the resulting `s3-access-logging` finding |
 | `excluded_resource_ids` | list(string) | | `[]` | Policy IDs filtered from the dashboard (Tier 2 exclusion) |
+| `inline_config_rule_name` | string | | `""` | Optional. Config rule name from the `iam-overpermissive-inline-policy` module. When set, the dashboard scans IAM principals and includes inline findings in the unified findings table |
+| `fullwildcard_config_rule_name` | string | | `""` | Optional. Config rule name from the `iam-policy-no-fullwildcard` module. When set, the dashboard includes `Action:*` customer-managed-policy findings (severity CRIT) in the unified findings table |
+| `excluded_principal_ids` | list(string) | | `[]` | Composite IDs (`<kind>/<name>`) filtering inline findings from the dashboard |
 
 ## Outputs
 
@@ -105,6 +108,55 @@ At default settings (15-min refresh, ~10 stakeholder loads/day): under $0.10/mon
 ```bash
 aws lambda invoke --function-name "$(terraform output -raw refresh_lambda_function_name)" /dev/null
 ```
+
+## Unified findings view (v2.0)
+
+When the two optional inputs `inline_config_rule_name` and/or `fullwildcard_config_rule_name` are set, the dashboard renders an additional "Unified findings" section at the top of the page. This view aggregates findings from all configured Config rules into a single severity-sorted table:
+
+| Column | What it shows |
+|---|---|
+| Severity | `CRIT` for `Action: "*"` findings, `HIGH` for `<service>:*` findings. Pattern-derived; not configurable. |
+| Source | `CMP` for customer-managed-policy findings (either source rule), `Inline:Role` / `Inline:User` / `Inline:Group` for inline-policy findings on principals. |
+| Resource | Policy ARN for CMP findings; composite `<kind>/<name>` plus ARN for principals. Inline findings also list the offending inline policy names from the `OverpermissivePolicies` tag. |
+| Pattern | `Action:*` or `service:*`, color-coded to match the severity. |
+| Last evaluated | ISO-8601 timestamp from the source's `LastEvaluated` tag. |
+| Actions | Per-row copy-to-clipboard buttons. |
+
+### Per-row copy buttons
+
+Each finding row has a "copy exempt CLI" button that copies the correctly-templated `aws iam tag-{policy,role,user,group}` command with the right ARN or name pre-filled and a `REPLACE WITH JUSTIFICATION` placeholder for the reason tag.
+
+A "copy remediate CLI" button is shown when the source has a well-defined operator action — SSM `start-automation-execution` for the existing wildcard module's findings, an `aws iam list-entities-for-policy` starter command for full-wildcard findings (which are not auto-remediated by design), and SSM analyze invocation for inline findings.
+
+### Wiring example
+
+```hcl
+module "iam_wildcard_action_policy" {
+  source      = "git::.../modules/iam-wildcard-action-policy"
+  name_prefix = "crwd"
+}
+
+module "iam_overpermissive_inline_policy" {
+  source      = "git::.../modules/iam-overpermissive-inline-policy"
+  name_prefix = "crwd"
+}
+
+module "iam_policy_no_fullwildcard" {
+  source      = "git::.../modules/iam-policy-no-fullwildcard"
+  name_prefix = "crwd"
+}
+
+module "iam_wildcard_dashboard" {
+  source                        = "git::.../modules/iam-wildcard-action-policy-dashboard"
+  name_prefix                   = "crwd"
+  config_rule_name              = module.iam_wildcard_action_policy.config_rule_name
+  inline_config_rule_name       = module.iam_overpermissive_inline_policy.config_rule_name
+  fullwildcard_config_rule_name = module.iam_policy_no_fullwildcard.config_rule_name
+  access_log_bucket             = "my-org-access-logs-bucket"
+}
+```
+
+When only `config_rule_name` is wired (the default), the dashboard renders v1.0 behavior identically — no unified section is emitted. Existing deployments need no changes.
 
 ## Module-CLI script parity
 

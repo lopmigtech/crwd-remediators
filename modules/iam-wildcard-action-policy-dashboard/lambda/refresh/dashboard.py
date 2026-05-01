@@ -57,6 +57,20 @@ TAGS_OF_INTEREST = (
     "CrwdRemediatorExempt",
     "CrwdRemediatorExemptReason",
     "CrwdRemediatorExemptExpiry",
+    # iam-policy-no-fullwildcard module's tags (v2.0):
+    "WildcardPattern",
+    "Severity",
+)
+
+# Tags written by the iam-overpermissive-inline-policy module on principals.
+INLINE_PRINCIPAL_TAGS_OF_INTEREST = (
+    "OverpermissivePolicies",
+    "WildcardPattern",
+    "WildcardCount",
+    "LastEvaluated",
+    "CrwdRemediatorExempt",
+    "CrwdRemediatorExemptReason",
+    "CrwdRemediatorExemptInlinePolicies",
 )
 
 
@@ -184,7 +198,11 @@ def scan_fleet_tags(iam_client, max_workers: int = 20) -> list[dict[str, Any]]:
         except (ClientError, BotoCoreError):
             return None
         tagmap = {t["Key"]: t["Value"] for t in resp.get("Tags", [])}
-        if not any(k in tagmap for k in ("WildcardCategory", "CrwdRemediatorExempt")):
+        # Pick up policies tagged by either remediator: WildcardCategory (existing
+        # iam-wildcard-action-policy module) or WildcardPattern (iam-policy-no-
+        # fullwildcard module). CrwdRemediatorExempt picks up exempt policies even
+        # when not yet analyzed.
+        if not any(k in tagmap for k in ("WildcardCategory", "WildcardPattern", "CrwdRemediatorExempt")):
             return None
         entry = dict(entry)
         for key in TAGS_OF_INTEREST:
@@ -203,6 +221,62 @@ def scan_fleet_tags(iam_client, max_workers: int = 20) -> list[dict[str, Any]]:
     return out
 
 
+# ---------- principal scan (iam-overpermissive-inline-policy source) ----------
+
+_PRINCIPAL_KINDS = (
+    ("Role", "list_roles", "Roles", "RoleName", "list_role_tags", "RoleName"),
+    ("User", "list_users", "Users", "UserName", "list_user_tags", "UserName"),
+    ("Group", "list_groups", "Groups", "GroupName", "list_group_tags", "GroupName"),
+)
+
+
+def scan_principal_inline_tags(iam_client, max_workers: int = 20) -> list[dict[str, Any]]:
+    """Scan IAM principals (Role/User/Group) for inline-overpermissive findings tags."""
+    principals: list[dict[str, Any]] = []
+    for kind, paginator_name, list_key, name_key, _, _ in _PRINCIPAL_KINDS:
+        paginator = iam_client.get_paginator(paginator_name)
+        for page in paginator.paginate():
+            for p in page.get(list_key, []):
+                principals.append({
+                    "principal_kind": kind,
+                    "principal_name": p[name_key],
+                    "principal_arn": p["Arn"],
+                })
+
+    print(f"scanning {len(principals)} principals for inline-overpermissive tags...", file=sys.stderr)
+    out: list[dict[str, Any]] = []
+
+    def fetch(entry: dict[str, Any]) -> dict[str, Any] | None:
+        kind = entry["principal_kind"]
+        name = entry["principal_name"]
+        try:
+            for k, _, _, _, tags_op, tags_kw in _PRINCIPAL_KINDS:
+                if k == kind:
+                    resp = getattr(iam_client, tags_op)(**{tags_kw: name})
+                    break
+            else:
+                return None
+        except (ClientError, BotoCoreError):
+            return None
+        tagmap = {t["Key"]: t["Value"] for t in resp.get("Tags", [])}
+        # Match principals tagged by the inline module: WildcardPattern indicates
+        # findings; OverpermissivePolicies is the offending-inline-policy list;
+        # CrwdRemediatorExempt picks up exempt principals even without findings.
+        if not any(k in tagmap for k in ("WildcardPattern", "OverpermissivePolicies", "CrwdRemediatorExempt")):
+            return None
+        entry = dict(entry)
+        for key in INLINE_PRINCIPAL_TAGS_OF_INTEREST:
+            entry[key] = tagmap.get(key, "")
+        return entry
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for result in pool.map(fetch, principals):
+            if result is not None:
+                out.append(result)
+    print(f"  done: {len(out)} matched of {len(principals)}", file=sys.stderr)
+    return out
+
+
 # ---------- state assembly ----------
 
 def build_state(
@@ -213,8 +287,16 @@ def build_state(
     executions: dict[str, dict[str, Any]] | None,
     account_id: str,
     region: str,
+    inline_rule_name: str = "",
+    fullwildcard_rule_name: str = "",
+    inline_findings: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    inline_findings = inline_findings or []
     analyzed = [p for p in fleet if p.get("WildcardCategory")]
+    fullwildcard_policies = [
+        p for p in fleet
+        if p.get("WildcardPattern") == "full" and not p.get("WildcardCategory")
+    ]
     exempt = [p for p in fleet if p.get("CrwdRemediatorExempt", "").lower() == "true"]
     flapping = [p for p in fleet if p.get("FlapLastDetected")]
 
@@ -247,9 +329,18 @@ def build_state(
         if diff and las:
             unused.append({**p, "_unused_wildcards": diff})
 
+    unified = _build_unified_findings(
+        analyzed=analyzed,
+        fullwildcard_policies=fullwildcard_policies,
+        inline_findings=inline_findings,
+    )
+    unified_active = bool(inline_rule_name) or bool(fullwildcard_rule_name)
+
     return {
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "config_rule": rule_name,
+        "inline_config_rule": inline_rule_name,
+        "fullwildcard_config_rule": fullwildcard_rule_name,
         "account_id": account_id,
         "region": region,
         "totals": {
@@ -258,6 +349,8 @@ def build_state(
             "pending_analysis": len(pending),
             "exempt": len(exempt),
             "flapping": len(flapping),
+            "fullwildcard_policies": len(fullwildcard_policies),
+            "inline_findings": len(inline_findings),
             **{f"category_{k.lower()}": v for k, v in by_category.items()},
         },
         "by_category": by_category,
@@ -268,7 +361,79 @@ def build_state(
         "flapping": flapping,
         "unused": unused,
         "executions": executions or {},
+        "fullwildcard_policies": fullwildcard_policies,
+        "inline_findings": inline_findings,
+        "unified_findings": unified,
+        "unified_active": unified_active,
     }
+
+
+def _build_unified_findings(
+    *,
+    analyzed: list[dict[str, Any]],
+    fullwildcard_policies: list[dict[str, Any]],
+    inline_findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Combine the three sources into one severity-sorted finding list."""
+    findings: list[dict[str, Any]] = []
+
+    for p in analyzed:
+        findings.append({
+            "source": "managed-cmp-service",
+            "source_label": "CMP",
+            "severity": "HIGH",
+            "pattern": "service",
+            "resource_kind": "Policy",
+            "resource_name": p.get("policy_name", ""),
+            "resource_arn": p.get("policy_arn", ""),
+            "exempt": (p.get("CrwdRemediatorExempt", "") or "").lower() == "true",
+            "exempt_reason": p.get("CrwdRemediatorExemptReason", ""),
+            "last_evaluated": p.get("LastEvaluated") or p.get("SuggestDate") or "",
+            "details": {
+                "category": p.get("WildcardCategory", ""),
+                "services": p.get("WildcardServices", ""),
+            },
+        })
+
+    for p in fullwildcard_policies:
+        findings.append({
+            "source": "managed-cmp-fullwildcard",
+            "source_label": "CMP",
+            "severity": "CRIT",
+            "pattern": "full",
+            "resource_kind": "Policy",
+            "resource_name": p.get("policy_name", ""),
+            "resource_arn": p.get("policy_arn", ""),
+            "exempt": (p.get("CrwdRemediatorExempt", "") or "").lower() == "true",
+            "exempt_reason": p.get("CrwdRemediatorExemptReason", ""),
+            "last_evaluated": p.get("LastEvaluated", ""),
+            "details": {},
+        })
+
+    for p in inline_findings:
+        kind = p.get("principal_kind", "")
+        pattern = p.get("WildcardPattern", "")
+        severity = "CRIT" if pattern == "full" else "HIGH" if pattern == "service" else "INFO"
+        findings.append({
+            "source": f"inline-{kind.lower()}",
+            "source_label": f"Inline:{kind}",
+            "severity": severity,
+            "pattern": pattern or "none",
+            "resource_kind": kind,
+            "resource_name": p.get("principal_name", ""),
+            "resource_arn": p.get("principal_arn", ""),
+            "exempt": (p.get("CrwdRemediatorExempt", "") or "").lower() == "true",
+            "exempt_reason": p.get("CrwdRemediatorExemptReason", ""),
+            "last_evaluated": p.get("LastEvaluated", ""),
+            "details": {
+                "overpermissive_policies": p.get("OverpermissivePolicies", ""),
+                "wildcard_count": p.get("WildcardCount", "0"),
+            },
+        })
+
+    severity_order = {"CRIT": 0, "HIGH": 1, "INFO": 2}
+    findings.sort(key=lambda f: (severity_order.get(f["severity"], 99), f["resource_kind"], f["resource_name"]))
+    return findings
 
 
 def _split_plus(value: str) -> list[str]:
@@ -336,6 +501,42 @@ code, .mono { font-family: 'SF Mono', 'Fira Code', Consolas, monospace; font-siz
 .svc-header { font-weight: 600; color: #58a6ff; font-size: 13px; margin-bottom: 4px; }
 .meta { color: #8b949e; font-size: 12px; }
 .section-empty { color: #8b949e; font-style: italic; padding: 16px; background: #161b22; border: 1px dashed #30363d; border-radius: 8px; }
+.tag-severity-crit { background: #3d1214; color: #f85149; }
+.tag-severity-high { background: #3d2e00; color: #d29922; }
+.tag-severity-info { background: #1c2128; color: #8b949e; }
+.tag-pattern-full { background: #3d1214; color: #f85149; font-family: 'SF Mono', 'Fira Code', monospace; }
+.tag-pattern-service { background: #3d2e00; color: #d29922; font-family: 'SF Mono', 'Fira Code', monospace; }
+.tag-pattern-none { background: #1c2128; color: #8b949e; font-family: 'SF Mono', 'Fira Code', monospace; }
+.copy-btn { display: inline-block; background: #1c2128; color: #58a6ff; border: 1px solid #30363d; border-radius: 4px; padding: 4px 10px; margin: 2px; font-family: inherit; font-size: 12px; cursor: pointer; }
+.copy-btn:hover { background: #21262d; border-color: #58a6ff; }
+.copy-btn.copied { background: #0d3321; color: #3fb950; border-color: #3fb950; }
+.unified-source { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: #1c2128; color: #c9d1d9; border: 1px solid #30363d; }
+"""
+
+_CLIPBOARD_JS = """
+function copyText(t, el) {
+  function done() {
+    if (!el) return;
+    var orig = el.textContent;
+    el.textContent = '✓ copied';
+    el.classList.add('copied');
+    setTimeout(function () {
+      el.textContent = orig;
+      el.classList.remove('copied');
+    }, 1200);
+  }
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(t).then(done);
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = t;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); } finally { document.body.removeChild(ta); }
+  }
+}
 """
 
 
@@ -346,16 +547,28 @@ def render_html(state: dict[str, Any]) -> str:
     parts: list[str] = []
     parts.append("<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>")
     parts.append("<title>IAM Wildcard Policy Dashboard</title>")
-    parts.append(f"<style>{_CSS}</style></head><body>")
+    parts.append(f"<style>{_CSS}</style>")
+    parts.append(f"<script>{_CLIPBOARD_JS}</script>")
+    parts.append("</head><body>")
     parts.append("<h1>IAM Wildcard Policy Dashboard</h1>")
+
+    subtitle_rules = [f"<code>{html.escape(state['config_rule'])}</code>"]
+    if state.get("inline_config_rule"):
+        subtitle_rules.append(f"<code>{html.escape(state['inline_config_rule'])}</code>")
+    if state.get("fullwildcard_config_rule"):
+        subtitle_rules.append(f"<code>{html.escape(state['fullwildcard_config_rule'])}</code>")
     parts.append(
-        "<p class='subtitle'>Generated {gen} from account {acc} ({region}) &middot; Config rule: <code>{rule}</code></p>".format(
+        "<p class='subtitle'>Generated {gen} from account {acc} ({region}) &middot; Config rules: {rules}</p>".format(
             gen=html.escape(state["generated_at"]),
             acc=html.escape(state.get("account_id", "unknown")),
             region=html.escape(state.get("region", "unknown")),
-            rule=html.escape(state["config_rule"]),
+            rules=", ".join(subtitle_rules),
         )
     )
+
+    if state.get("unified_active"):
+        parts.append(_render_unified_summary(state))
+        parts.append(_render_unified_findings(state))
 
     parts.append(_render_summary(state))
     parts.append(_render_executions(state))
@@ -367,6 +580,175 @@ def render_html(state: dict[str, Any]) -> str:
 
     parts.append("</body></html>")
     return "".join(parts)
+
+
+def _render_unified_summary(state: dict[str, Any]) -> str:
+    findings = state.get("unified_findings", [])
+    crit = sum(1 for f in findings if f["severity"] == "CRIT" and not f["exempt"])
+    high = sum(1 for f in findings if f["severity"] == "HIGH" and not f["exempt"])
+    exempt = sum(1 for f in findings if f["exempt"])
+    flapping = state["totals"].get("flapping", 0)
+
+    cards = [
+        ("Critical (Action:*)", str(crit), "complex" if crit else "muted"),
+        ("High (service:*)", str(high), "moderate" if high else "muted"),
+        ("Exempt", str(exempt), "muted"),
+        ("Flapping", str(flapping), "moderate" if flapping else "muted"),
+    ]
+    chunks = ["<h2>Unified rollup <span class='meta'>(all sources, this account)</span></h2>", "<div class='grid'>"]
+    for label, value, css in cards:
+        chunks.append(
+            "<div class='card'><div class='label'>{l}</div><div class='value {c}'>{v}</div></div>".format(
+                l=html.escape(label), v=html.escape(value), c=css
+            )
+        )
+    chunks.append("</div>")
+    return "".join(chunks)
+
+
+def _render_unified_findings(state: dict[str, Any]) -> str:
+    findings = state.get("unified_findings", [])
+    if not findings:
+        return (
+            "<h2>Unified findings</h2>"
+            "<p class='section-empty'>No findings yet across the configured Config rules — wait for the next evaluation sweep, or trigger one with "
+            "<code>aws configservice start-config-rules-evaluation</code>.</p>"
+        )
+
+    rows = []
+    for f in findings:
+        sev_class = {
+            "CRIT": "tag-severity-crit",
+            "HIGH": "tag-severity-high",
+            "INFO": "tag-severity-info",
+        }.get(f["severity"], "tag-severity-info")
+        pattern_class = "tag-pattern-" + f["pattern"]
+        pattern_label = {"full": "Action:*", "service": "service:*", "none": "—"}.get(f["pattern"], f["pattern"])
+
+        # Resource label varies by kind: policies show ARN; principals show kind/name composite plus ARN.
+        if f["resource_kind"] == "Policy":
+            resource_block = (
+                f"<strong>{html.escape(f['resource_name'])}</strong>"
+                f"<br><span class='meta mono'>{html.escape(f['resource_arn'])}</span>"
+            )
+        else:
+            kind_lower = f["resource_kind"].lower()
+            resource_block = (
+                f"<strong>{kind_lower}/{html.escape(f['resource_name'])}</strong>"
+                f"<br><span class='meta mono'>{html.escape(f['resource_arn'])}</span>"
+            )
+            if f["details"].get("overpermissive_policies"):
+                resource_block += (
+                    f"<br><span class='meta'>Inline policies: "
+                    f"{html.escape(f['details']['overpermissive_policies'])}</span>"
+                )
+
+        if f["exempt"]:
+            resource_block = (
+                f"<span class='tag tag-exempt' title='{html.escape(f.get('exempt_reason') or '')}'>EXEMPT</span> "
+                + resource_block
+            )
+
+        # Buttons. Each row gets at least an exempt-CLI button. Source-specific
+        # remediate-CLI is included where the operator action is well-defined.
+        buttons: list[str] = []
+        exempt_cli = _build_exempt_cli(f)
+        if exempt_cli:
+            buttons.append(_button("copy exempt CLI", exempt_cli))
+        remediate_cli = _build_remediate_cli(f)
+        if remediate_cli:
+            buttons.append(_button("copy remediate CLI", remediate_cli))
+
+        rows.append(
+            "<tr>"
+            f"<td><span class='tag {sev_class}'>{html.escape(f['severity'])}</span></td>"
+            f"<td><span class='unified-source'>{html.escape(f['source_label'])}</span></td>"
+            f"<td>{resource_block}</td>"
+            f"<td><span class='tag {pattern_class}'>{html.escape(pattern_label)}</span></td>"
+            f"<td class='meta'>{html.escape(f.get('last_evaluated', ''))}</td>"
+            f"<td>{''.join(buttons)}</td>"
+            "</tr>"
+        )
+
+    return (
+        "<h2>Unified findings <span class='meta'>(severity-sorted)</span></h2>"
+        "<table>"
+        "<tr><th>Severity</th><th>Source</th><th>Resource</th><th>Pattern</th>"
+        "<th>Last evaluated</th><th>Actions</th></tr>"
+        + "".join(rows)
+        + "</table>"
+    )
+
+
+def _button(label: str, payload: str) -> str:
+    """Render a copy-to-clipboard button. Payload is JSON-encoded so quotes survive HTML attribute embedding."""
+    encoded = html.escape(json.dumps(payload), quote=True)
+    return (
+        f"<button type='button' class='copy-btn' "
+        f"onclick='copyText({encoded}, this)'>{html.escape(label)}</button>"
+    )
+
+
+def _build_exempt_cli(finding: dict[str, Any]) -> str:
+    kind = finding["resource_kind"]
+    if kind == "Policy":
+        return (
+            "aws iam tag-policy "
+            f"--policy-arn {finding['resource_arn']} "
+            "--tags Key=CrwdRemediatorExempt,Value=true "
+            "Key=CrwdRemediatorExemptReason,Value=\"REPLACE WITH JUSTIFICATION\""
+        )
+    if kind == "Role":
+        return (
+            "aws iam tag-role "
+            f"--role-name {finding['resource_name']} "
+            "--tags Key=CrwdRemediatorExempt,Value=true "
+            "Key=CrwdRemediatorExemptReason,Value=\"REPLACE WITH JUSTIFICATION\""
+        )
+    if kind == "User":
+        return (
+            "aws iam tag-user "
+            f"--user-name {finding['resource_name']} "
+            "--tags Key=CrwdRemediatorExempt,Value=true "
+            "Key=CrwdRemediatorExemptReason,Value=\"REPLACE WITH JUSTIFICATION\""
+        )
+    if kind == "Group":
+        return (
+            "aws iam tag-group "
+            f"--group-name {finding['resource_name']} "
+            "--tags Key=CrwdRemediatorExempt,Value=true "
+            "Key=CrwdRemediatorExemptReason,Value=\"REPLACE WITH JUSTIFICATION\""
+        )
+    return ""
+
+
+def _build_remediate_cli(finding: dict[str, Any]) -> str:
+    src = finding.get("source", "")
+    if src == "managed-cmp-service":
+        return (
+            "aws ssm start-automation-execution "
+            "--document-name <iam-wildcard-action-policy-ssm-doc-name> "
+            f"--parameters \"ResourceId={finding['resource_arn']},Action=full-analysis,"
+            "AutomationAssumeRole=<ssm-role-arn>\""
+        )
+    if src == "managed-cmp-fullwildcard":
+        # Full wildcards in customer-managed policies are not auto-remediated by design.
+        return (
+            "# Full wildcards in customer-managed policies are not auto-remediated.\n"
+            "# Review attachments and scope at source. Use the policy ARN below to start:\n"
+            f"aws iam list-entities-for-policy --policy-arn {finding['resource_arn']}"
+        )
+    if src.startswith("inline-"):
+        # The inline module's RESOURCE_ID parameter is the principal's AWS resource ID
+        # (extracted from the principal ARN suffix is not portable; the operator should
+        # paste the actual resource ID from `aws iam get-{role|user|group}` output).
+        return (
+            "aws ssm start-automation-execution "
+            "--document-name <iam-overpermissive-inline-policy-ssm-doc-name> "
+            f"--parameters \"ResourceId=<resource-id-from-iam-get-{finding['resource_kind'].lower()}>,"
+            "Action=analyze,AutomationAssumeRole=<ssm-role-arn>\""
+        )
+    return ""
 
 
 def _render_summary(state: dict[str, Any]) -> str:

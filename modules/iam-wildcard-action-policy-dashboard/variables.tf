@@ -57,3 +57,23 @@ variable "excluded_resource_ids" {
   description = "IAM policy IDs to filter out of the dashboard display. Honored by the refresh Lambda's collect step (Tier 2 exclusion per Rule 11)."
   default     = []
 }
+
+# --- Cross-module dashboard inputs (v2.0) ---
+
+variable "inline_config_rule_name" {
+  type        = string
+  description = "Optional. Config rule name from the iam-overpermissive-inline-policy module. When set, the dashboard scans IAM principals (Role/User/Group) for inline-overpermissive findings tags and includes them in the unified findings table. When empty, the dashboard preserves v1.0 single-source rendering."
+  default     = ""
+}
+
+variable "fullwildcard_config_rule_name" {
+  type        = string
+  description = "Optional. Config rule name from the iam-policy-no-fullwildcard module. When set, the dashboard includes Action:* customer-managed-policy findings (severity CRIT) in the unified findings table. When empty, the dashboard preserves v1.0 single-source rendering."
+  default     = ""
+}
+
+variable "excluded_principal_ids" {
+  type        = list(string)
+  description = "Composite resource IDs (<kind>/<name>) to filter principal-based inline findings out of the dashboard display. Mirrors excluded_resource_ids but for the inline-policy source."
+  default     = []
+}

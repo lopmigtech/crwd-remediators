@@ -121,19 +121,32 @@ data "aws_iam_policy_document" "refresh" {
   }
 
   statement {
-    sid     = "ListIAMPolicies"
-    effect  = "Allow"
-    actions = ["iam:ListPolicies"]
-    # iam:ListPolicies does not support resource-level permissions; AWS requires "*".
+    sid    = "ListIAMResources"
+    effect = "Allow"
+    actions = [
+      "iam:ListPolicies",
+      "iam:ListRoles",
+      "iam:ListUsers",
+      "iam:ListGroups",
+    ]
+    # These List actions do not support resource-level permissions; AWS requires "*".
     resources = ["*"]
   }
 
   statement {
-    sid     = "ReadIAMPolicyTags"
-    effect  = "Allow"
-    actions = ["iam:ListPolicyTags"]
+    sid    = "ReadIAMResourceTags"
+    effect = "Allow"
+    actions = [
+      "iam:ListPolicyTags",
+      "iam:ListRoleTags",
+      "iam:ListUserTags",
+      "iam:ListGroupTags",
+    ]
     resources = [
       "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/*",
+      "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/*",
+      "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:user/*",
+      "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:group/*",
     ]
   }
 
@@ -182,9 +195,12 @@ resource "aws_lambda_function" "refresh" {
 
   environment {
     variables = {
-      CONFIG_RULE_NAME      = var.config_rule_name
-      DASHBOARD_BUCKET      = aws_s3_bucket.dashboard.id
-      EXCLUDED_RESOURCE_IDS = join(",", var.excluded_resource_ids)
+      CONFIG_RULE_NAME              = var.config_rule_name
+      INLINE_CONFIG_RULE_NAME       = var.inline_config_rule_name
+      FULLWILDCARD_CONFIG_RULE_NAME = var.fullwildcard_config_rule_name
+      DASHBOARD_BUCKET              = aws_s3_bucket.dashboard.id
+      EXCLUDED_RESOURCE_IDS         = join(",", var.excluded_resource_ids)
+      EXCLUDED_PRINCIPAL_IDS        = join(",", var.excluded_principal_ids)
     }
   }
 

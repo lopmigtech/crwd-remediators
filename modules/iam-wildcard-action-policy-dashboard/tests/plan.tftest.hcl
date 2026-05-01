@@ -89,4 +89,51 @@ run "plan_resources" {
     )
     error_message = "Both Lambda log groups must use var.log_retention_days"
   }
+
+  assert {
+    condition     = var.inline_config_rule_name == ""
+    error_message = "inline_config_rule_name must default to empty string (preserves v1.0 single-source rendering)"
+  }
+
+  assert {
+    condition     = var.fullwildcard_config_rule_name == ""
+    error_message = "fullwildcard_config_rule_name must default to empty string"
+  }
+
+  assert {
+    condition     = length(var.excluded_principal_ids) == 0
+    error_message = "excluded_principal_ids must default to empty list"
+  }
+}
+
+run "v2_inputs_accept_unified_mode_values" {
+  command = plan
+
+  variables {
+    name_prefix                   = "test"
+    config_rule_name              = "test-iam-wildcard-action-policy"
+    inline_config_rule_name       = "test-iam-overpermissive-inline-policy"
+    fullwildcard_config_rule_name = "test-iam-policy-no-fullwildcard"
+    excluded_principal_ids        = ["role/BreakGlassAdmin", "user/legacy-admin"]
+  }
+
+  assert {
+    condition     = var.inline_config_rule_name == "test-iam-overpermissive-inline-policy"
+    error_message = "inline_config_rule_name must accept the configured rule name"
+  }
+
+  assert {
+    condition     = var.fullwildcard_config_rule_name == "test-iam-policy-no-fullwildcard"
+    error_message = "fullwildcard_config_rule_name must accept the configured rule name"
+  }
+
+  assert {
+    condition     = length(var.excluded_principal_ids) == 2
+    error_message = "excluded_principal_ids must accept a list of composite IDs"
+  }
+
+  assert {
+    condition     = aws_lambda_function.refresh.function_name != ""
+    error_message = "Refresh Lambda must still deploy when v2 inputs are populated"
+  }
 }

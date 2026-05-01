@@ -44,3 +44,21 @@ variable "excluded_resource_ids" {
   description = "Policy IDs to filter out of the dashboard."
   default     = []
 }
+
+variable "inline_config_rule_name" {
+  type        = string
+  description = "Optional. Config rule name from the iam-overpermissive-inline-policy module."
+  default     = ""
+}
+
+variable "fullwildcard_config_rule_name" {
+  type        = string
+  description = "Optional. Config rule name from the iam-policy-no-fullwildcard module."
+  default     = ""
+}
+
+variable "excluded_principal_ids" {
+  type        = list(string)
+  description = "Composite resource IDs (<kind>/<name>) to filter principal-based inline findings out of the dashboard."
+  default     = []
+}
