@@ -1,0 +1,114 @@
+schemaVersion: "0.3"
+description: "Tag IAM customer-managed policies flagged by IAM_POLICY_NO_STATEMENTS_WITH_FULL_ACCESS with severity for dashboard consumption. v1.0 ships tag-and-route mode (no auto-rewrite — full-wildcard scoping from CloudTrail is too low-confidence to apply automatically)."
+assumeRole: "{{ AutomationAssumeRole }}"
+parameters:
+  ResourceId:
+    type: String
+    description: "AWS Config resource ID for the customer-managed policy under evaluation"
+  AutomationAssumeRole:
+    type: String
+    description: "IAM role ARN for SSM to assume"
+  Action:
+    type: String
+    description: "Operation mode"
+    default: "tag-and-route"
+    allowedValues:
+      - "tag-and-route"
+  ExcludedResourceIds:
+    type: StringList
+    default: []
+    description: "Customer-managed policy ARNs to skip"
+  TagBasedExemptionEnabled:
+    type: String
+    default: "true"
+    allowedValues:
+      - "true"
+      - "false"
+    description: "If 'true', tags on the policy are read and the document skips remediation when the exemption tag is present"
+  ExemptionTagKey:
+    type: String
+    default: "CrwdRemediatorExempt"
+    description: "Tag key checked on the policy for exemption"
+  RequireExemptionReason:
+    type: String
+    default: "true"
+    allowedValues:
+      - "true"
+      - "false"
+    description: "If 'true', exemption is only honored when CrwdRemediatorExemptReason tag is non-empty"
+mainSteps:
+  - name: TagPolicyWithSeverity
+    action: aws:executeScript
+    description: "Resolve RESOURCE_ID (policy UUID) to a policy ARN, check exemption, and tag the policy with critical severity."
+    onFailure: Abort
+    inputs:
+      Runtime: python3.11
+      Handler: script_handler
+      InputPayload:
+        ResourceId: "{{ ResourceId }}"
+        Action: "{{ Action }}"
+        ExcludedResourceIds: "{{ ExcludedResourceIds }}"
+        TagBasedExemptionEnabled: "{{ TagBasedExemptionEnabled }}"
+        ExemptionTagKey: "{{ ExemptionTagKey }}"
+        RequireExemptionReason: "{{ RequireExemptionReason }}"
+      Script: |
+        import boto3
+        import datetime
+
+        iam = boto3.client("iam")
+
+        def find_policy_by_id(resource_id):
+            """Return the customer-managed policy ARN with the given AWS resource ID."""
+            for page in iam.get_paginator("list_policies").paginate(Scope="Local"):
+                for policy in page["Policies"]:
+                    if policy["PolicyId"] == resource_id:
+                        return policy["Arn"]
+            return None
+
+        def list_policy_tags(arn):
+            return {t["Key"]: t["Value"] for t in iam.list_policy_tags(PolicyArn=arn).get("Tags", [])}
+
+        def is_excluded(arn, excluded_ids, tag_based, tag_key, require_reason):
+            for excluded in excluded_ids:
+                if excluded == arn:
+                    return (True, f"Listed in excluded_resource_ids: {arn}")
+            if str(tag_based).lower() != "true":
+                return (False, "")
+            tags = list_policy_tags(arn)
+            if tags.get(tag_key) != "true":
+                return (False, "")
+            if str(require_reason).lower() == "true":
+                reason = tags.get(tag_key + "Reason", "")
+                if not reason.strip():
+                    return (False, f"{tag_key}=true tag set but {tag_key}Reason missing or empty (ignored)")
+            return (True, f"{tag_key}=true tag honored")
+
+        def script_handler(event, context):
+            resource_id = event.get("ResourceId")
+            arn = find_policy_by_id(resource_id)
+            if arn is None:
+                return {"status": "policy-not-found", "resource_id": resource_id}
+
+            excluded_ids = event.get("ExcludedResourceIds") or []
+            if isinstance(excluded_ids, str):
+                excluded_ids = [excluded_ids] if excluded_ids else []
+
+            excluded, reason = is_excluded(
+                arn,
+                excluded_ids,
+                event.get("TagBasedExemptionEnabled", "true"),
+                event.get("ExemptionTagKey", "CrwdRemediatorExempt"),
+                event.get("RequireExemptionReason", "true"),
+            )
+            if excluded:
+                return {"status": "exempted", "policy_arn": arn, "reason": reason}
+
+            iam.tag_policy(
+                PolicyArn=arn,
+                Tags=[
+                    {"Key": "WildcardPattern", "Value": "full"},
+                    {"Key": "Severity", "Value": "CRIT"},
+                    {"Key": "LastEvaluated", "Value": datetime.datetime.now(datetime.timezone.utc).isoformat()},
+                ],
+            )
+            return {"status": "tagged", "policy_arn": arn, "severity": "CRIT"}

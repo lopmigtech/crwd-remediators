@@ -2,18 +2,19 @@
 
 This is the `crwd-remediators` Terraform module repo. It contains fleet-remediator modules that deploy AWS Config rules + SSM Automation documents to detect and remediate CRWD/SecHub findings at scale.
 
-## Skills
+## Agent skills
 
-This repo is supported by three Claude Code skills under `~/.claude/skills/`:
+### Issue tracker
 
-- **`authoring-a-remediator`** — 17-step procedure for adding a new module. Say "add a remediator for X" to trigger.
-- **`reviewing-a-remediator`** — 18-gate quality checklist. Say "review <module-name>" to trigger. Say "review and fix <module-name>" for auto-fix mode.
-- **`triaging-a-finding`** — Decision tree for evaluating a CRWD/SecHub finding. Say "triage finding X" to trigger.
+Issues and PRDs live as GitLab issues at `gitlab.com/lopmig.tech/crwd-remediators` (use the `glab` CLI). See `docs/agents/issue-tracker.md`.
 
-## Conventions
+### Triage labels
 
-All repo conventions (11 hard rules, standard variables/outputs, file templates, naming, versioning) are documented in:
-`~/.claude/skills/authoring-a-remediator/references/repo-conventions.md`
+Five canonical labels with default vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout. `CONTEXT.md` and `docs/adr/` at the repo root, both created lazily by `/grill-with-docs`. See `docs/agents/domain.md`.
 
 ## Key rules
 

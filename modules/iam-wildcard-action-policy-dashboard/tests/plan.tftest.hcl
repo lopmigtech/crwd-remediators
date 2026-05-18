@@ -1,0 +1,139 @@
+variables {
+  name_prefix      = "test"
+  config_rule_name = "test-iam-wildcard-action-policy"
+}
+
+run "plan_resources" {
+  command = plan
+
+  assert {
+    condition     = aws_s3_bucket.dashboard.bucket != ""
+    error_message = "Module must create exactly one S3 bucket for the dashboard"
+  }
+
+  assert {
+    condition = (
+      aws_s3_bucket_public_access_block.dashboard.block_public_acls &&
+      aws_s3_bucket_public_access_block.dashboard.block_public_policy &&
+      aws_s3_bucket_public_access_block.dashboard.ignore_public_acls &&
+      aws_s3_bucket_public_access_block.dashboard.restrict_public_buckets
+    )
+    error_message = "All four Block Public Access flags must be enabled on the dashboard bucket"
+  }
+
+  assert {
+    condition     = one(aws_s3_bucket_server_side_encryption_configuration.dashboard.rule).apply_server_side_encryption_by_default[0].sse_algorithm == "AES256"
+    error_message = "S3 bucket must have SSE-S3 (AES256) default encryption"
+  }
+
+  assert {
+    condition     = aws_s3_bucket_versioning.dashboard.versioning_configuration[0].status == "Enabled"
+    error_message = "S3 bucket versioning must be enabled"
+  }
+
+  assert {
+    condition     = length(regexall("aws:SecureTransport", data.aws_iam_policy_document.dashboard_bucket.json)) > 0
+    error_message = "Bucket policy must include a Deny statement on aws:SecureTransport=false"
+  }
+
+  assert {
+    condition     = length(aws_s3_bucket_logging.dashboard) == (var.access_log_bucket == null ? 0 : 1)
+    error_message = "Server-access logging must be configured if access_log_bucket is set, and absent otherwise"
+  }
+
+  assert {
+    condition     = aws_lambda_function.refresh.runtime == "python3.12"
+    error_message = "Refresh Lambda must use python3.12 runtime"
+  }
+
+  assert {
+    condition     = aws_lambda_function.refresh.timeout == 300 && aws_lambda_function.refresh.memory_size == 512
+    error_message = "Refresh Lambda must use 512 MB memory and 5 min timeout"
+  }
+
+  assert {
+    condition = length([
+      for s in jsondecode(data.aws_iam_policy_document.refresh.json).Statement :
+      s if can(regex("ssm:|iam:Tag|iam:Untag|iam:PassRole|^\\*$", join(",", flatten([s.Action]))))
+    ]) == 0
+    error_message = "Refresh role must not include any ssm:*, iam:Tag*, iam:Untag*, iam:PassRole, or wildcard actions"
+  }
+
+  assert {
+    condition     = aws_lambda_function.redirect.runtime == "python3.12"
+    error_message = "Redirect Lambda must use python3.12 runtime"
+  }
+
+  assert {
+    condition     = aws_lambda_function_url.redirect.authorization_type == "AWS_IAM"
+    error_message = "Lambda Function URL must use AWS_IAM authorization (never NONE)"
+  }
+
+  assert {
+    condition = length([
+      for s in jsondecode(data.aws_iam_policy_document.redirect.json).Statement :
+      s if can(regex("config:|iam:|ssm:|s3:PutObject|s3:Delete|^\\*$", join(",", flatten([s.Action]))))
+    ]) == 0
+    error_message = "Redirect role must not include any config:*, iam:*, ssm:*, s3:PutObject, s3:Delete*, or wildcard actions"
+  }
+
+  assert {
+    condition     = aws_cloudwatch_event_rule.refresh_schedule.schedule_expression == "rate(${var.refresh_schedule_minutes} minutes)"
+    error_message = "EventBridge schedule must match var.refresh_schedule_minutes"
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_log_group.refresh.retention_in_days == var.log_retention_days &&
+      aws_cloudwatch_log_group.redirect.retention_in_days == var.log_retention_days
+    )
+    error_message = "Both Lambda log groups must use var.log_retention_days"
+  }
+
+  assert {
+    condition     = var.inline_config_rule_name == ""
+    error_message = "inline_config_rule_name must default to empty string (preserves v1.0 single-source rendering)"
+  }
+
+  assert {
+    condition     = var.fullwildcard_config_rule_name == ""
+    error_message = "fullwildcard_config_rule_name must default to empty string"
+  }
+
+  assert {
+    condition     = length(var.excluded_principal_ids) == 0
+    error_message = "excluded_principal_ids must default to empty list"
+  }
+}
+
+run "v2_inputs_accept_unified_mode_values" {
+  command = plan
+
+  variables {
+    name_prefix                   = "test"
+    config_rule_name              = "test-iam-wildcard-action-policy"
+    inline_config_rule_name       = "test-iam-overpermissive-inline-policy"
+    fullwildcard_config_rule_name = "test-iam-policy-no-fullwildcard"
+    excluded_principal_ids        = ["role/BreakGlassAdmin", "user/legacy-admin"]
+  }
+
+  assert {
+    condition     = var.inline_config_rule_name == "test-iam-overpermissive-inline-policy"
+    error_message = "inline_config_rule_name must accept the configured rule name"
+  }
+
+  assert {
+    condition     = var.fullwildcard_config_rule_name == "test-iam-policy-no-fullwildcard"
+    error_message = "fullwildcard_config_rule_name must accept the configured rule name"
+  }
+
+  assert {
+    condition     = length(var.excluded_principal_ids) == 2
+    error_message = "excluded_principal_ids must accept a list of composite IDs"
+  }
+
+  assert {
+    condition     = aws_lambda_function.refresh.function_name != ""
+    error_message = "Refresh Lambda must still deploy when v2 inputs are populated"
+  }
+}

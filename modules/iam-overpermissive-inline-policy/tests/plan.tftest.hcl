@@ -1,0 +1,115 @@
+variables {
+  name_prefix = "test"
+}
+
+run "plan_resources" {
+  command = plan
+
+  assert {
+    condition     = aws_config_config_rule.this.name != ""
+    error_message = "Module must create exactly one Config rule"
+  }
+
+  assert {
+    condition     = one(aws_config_config_rule.this.source).owner == "CUSTOM_LAMBDA"
+    error_message = "Config rule source owner must be CUSTOM_LAMBDA"
+  }
+
+  assert {
+    condition = alltrue([
+      for rt in ["AWS::IAM::Role", "AWS::IAM::User", "AWS::IAM::Group"] :
+      contains(one(aws_config_config_rule.this.scope).compliance_resource_types, rt)
+    ])
+    error_message = "Config rule scope must include AWS::IAM::Role, AWS::IAM::User, and AWS::IAM::Group"
+  }
+
+  assert {
+    condition     = contains(one(data.aws_iam_policy_document.ssm_assume_role.statement[0].principals).identifiers, "ssm.amazonaws.com")
+    error_message = "SSM automation role trust policy must allow ssm.amazonaws.com"
+  }
+
+  assert {
+    condition     = contains(one(data.aws_iam_policy_document.lambda_assume_role.statement[0].principals).identifiers, "lambda.amazonaws.com")
+    error_message = "Lambda role trust policy must allow lambda.amazonaws.com"
+  }
+
+  assert {
+    condition     = aws_lambda_function.rule_evaluator.function_name != ""
+    error_message = "Module must create exactly one Lambda function for Config rule evaluation"
+  }
+
+  assert {
+    condition     = aws_config_remediation_configuration.this.automatic == false
+    error_message = "automatic_remediation must default to false (dry-run, per Rule 8)"
+  }
+
+  assert {
+    condition     = [for p in aws_config_remediation_configuration.this.parameter : p.static_value if p.name == "Action"][0] == "analyze"
+    error_message = "Action parameter must default to 'analyze' (dry-run-safe)"
+  }
+
+  assert {
+    condition     = [for p in aws_config_remediation_configuration.this.parameter : p.static_value if p.name == "TagBasedExemptionEnabled"][0] == "true"
+    error_message = "tag_based_exemption_enabled must default to true (per design decision)"
+  }
+
+  assert {
+    condition     = [for p in aws_config_remediation_configuration.this.parameter : p.static_value if p.name == "ExemptionTagKey"][0] == "CrwdRemediatorExempt"
+    error_message = "exemption_tag_key must default to CrwdRemediatorExempt"
+  }
+
+  assert {
+    condition     = [for p in aws_config_remediation_configuration.this.parameter : p.static_value if p.name == "RequireExemptionReason"][0] == "true"
+    error_message = "require_exemption_reason must default to true (fail-loud on bare boolean exemptions)"
+  }
+
+  assert {
+    condition     = [for p in aws_config_remediation_configuration.this.parameter : p.static_value if p.name == "EnableGroupRemediation"][0] == "false"
+    error_message = "enable_group_remediation must default to false (opt-in due to fan-out blast radius)"
+  }
+}
+
+run "invalid_remediation_action_rejected" {
+  command = plan
+
+  variables {
+    name_prefix        = "test"
+    remediation_action = "delete-everything"
+  }
+
+  expect_failures = [
+    var.remediation_action,
+  ]
+}
+
+run "scheduled_notification_enabled_by_default" {
+  command = plan
+
+  variables {
+    name_prefix = "test"
+  }
+
+  assert {
+    condition     = length([for sd in aws_config_config_rule.this.source[0].source_detail : sd if sd.message_type == "ScheduledNotification"]) == 1
+    error_message = "Config rule must have exactly one ScheduledNotification source_detail when evaluation_frequency != 'Off'"
+  }
+
+  assert {
+    condition     = [for sd in aws_config_config_rule.this.source[0].source_detail : sd.maximum_execution_frequency if sd.message_type == "ScheduledNotification"][0] == "TwentyFour_Hours"
+    error_message = "Default evaluation_frequency must be TwentyFour_Hours"
+  }
+}
+
+run "scheduled_notification_disabled_when_off" {
+  command = plan
+
+  variables {
+    name_prefix          = "test"
+    evaluation_frequency = "Off"
+  }
+
+  assert {
+    condition     = length([for sd in aws_config_config_rule.this.source[0].source_detail : sd if sd.message_type == "ScheduledNotification"]) == 0
+    error_message = "Config rule must not have a ScheduledNotification source_detail when evaluation_frequency = 'Off'"
+  }
+}

@@ -1,0 +1,252 @@
+schemaVersion: "0.3"
+description: "Detect inline IAM policies with overly permissive wildcards (Action:* and <service>:*) on roles, users, and groups. v1.0 ships analyze mode (tag-only); mutating modes (backup-only, scope-and-backup, delete-and-backup) follow in a later release."
+assumeRole: "{{ AutomationAssumeRole }}"
+parameters:
+  ResourceId:
+    type: String
+    description: "AWS Config resource ID for the principal under evaluation"
+  AutomationAssumeRole:
+    type: String
+    description: "IAM role ARN for SSM to assume"
+  Action:
+    type: String
+    description: "Operation mode"
+    default: "analyze"
+    allowedValues:
+      - "analyze"
+  ExcludedResourceIds:
+    type: StringList
+    default: []
+    description: "Composite resource IDs (<principal-type>/<name>[#<inline-policy-name>]) to skip"
+  TagBasedExemptionEnabled:
+    type: String
+    default: "true"
+    allowedValues:
+      - "true"
+      - "false"
+    description: "If 'true', tags on the principal are read and the document skips remediation when the exemption tag is present"
+  ExemptionTagKey:
+    type: String
+    default: "CrwdRemediatorExempt"
+    description: "Tag key checked on the principal for exemption"
+  RequireExemptionReason:
+    type: String
+    default: "true"
+    allowedValues:
+      - "true"
+      - "false"
+    description: "If 'true', exemption is only honored when CrwdRemediatorExemptReason tag is non-empty"
+  EnableRoleRemediation:
+    type: String
+    default: "true"
+    allowedValues:
+      - "true"
+      - "false"
+    description: "Reserved for future mutating modes; analyze mode runs regardless of this flag"
+  EnableUserRemediation:
+    type: String
+    default: "true"
+    allowedValues:
+      - "true"
+      - "false"
+    description: "Reserved for future mutating modes; analyze mode runs regardless of this flag"
+  EnableGroupRemediation:
+    type: String
+    default: "false"
+    allowedValues:
+      - "true"
+      - "false"
+    description: "Reserved for future mutating modes; analyze mode runs regardless of this flag"
+mainSteps:
+  - name: AnalyzeAndTag
+    action: aws:executeScript
+    description: "Find the principal, check exemption, walk inline policies, classify wildcards, and tag the principal with findings."
+    onFailure: Abort
+    inputs:
+      Runtime: python3.11
+      Handler: script_handler
+      InputPayload:
+        ResourceId: "{{ ResourceId }}"
+        Action: "{{ Action }}"
+        ExcludedResourceIds: "{{ ExcludedResourceIds }}"
+        TagBasedExemptionEnabled: "{{ TagBasedExemptionEnabled }}"
+        ExemptionTagKey: "{{ ExemptionTagKey }}"
+        RequireExemptionReason: "{{ RequireExemptionReason }}"
+      Script: |
+        import boto3
+        import datetime
+        import json
+
+        iam = boto3.client("iam")
+
+        # KEEP IN SYNC with modules/iam-overpermissive-inline-policy/lambda/patterns.py.
+        # aws:executeScript runs in a sandboxed environment and cannot import from
+        # the Lambda's source code, so the classifier is duplicated here.
+        def classify_action(action):
+            if action == "*":
+                return "full"
+            if isinstance(action, str) and action.endswith(":*"):
+                return "service"
+            return None
+
+        def classify_statement(statement):
+            if statement.get("Effect") != "Allow":
+                return None
+            actions = statement.get("Action")
+            if actions is None:
+                return None
+            if isinstance(actions, str):
+                actions = [actions]
+            for action in actions:
+                pattern = classify_action(action)
+                if pattern is not None:
+                    return pattern
+            return None
+
+        def find_principal_by_id(resource_id):
+            """Return ('Role'|'User'|'Group', name) for the AWS resource ID, or (None, None)."""
+            for page in iam.get_paginator("list_roles").paginate():
+                for role in page["Roles"]:
+                    if role["RoleId"] == resource_id:
+                        return ("Role", role["RoleName"])
+            for page in iam.get_paginator("list_users").paginate():
+                for user in page["Users"]:
+                    if user["UserId"] == resource_id:
+                        return ("User", user["UserName"])
+            for page in iam.get_paginator("list_groups").paginate():
+                for group in page["Groups"]:
+                    if group["GroupId"] == resource_id:
+                        return ("Group", group["GroupName"])
+            return (None, None)
+
+        def list_principal_tags(kind, name):
+            if kind == "Role":
+                return {t["Key"]: t["Value"] for t in iam.list_role_tags(RoleName=name).get("Tags", [])}
+            if kind == "User":
+                return {t["Key"]: t["Value"] for t in iam.list_user_tags(UserName=name).get("Tags", [])}
+            if kind == "Group":
+                return {t["Key"]: t["Value"] for t in iam.list_group_tags(GroupName=name).get("Tags", [])}
+            return {}
+
+        def is_excluded(kind, name, excluded_ids, tag_based, tag_key, require_reason):
+            composite = f"{kind.lower()}/{name}"
+            for excluded in excluded_ids:
+                if excluded == composite or excluded.startswith(composite + "#"):
+                    return (True, f"Listed in excluded_resource_ids: {excluded}")
+            if str(tag_based).lower() != "true":
+                return (False, "")
+            tags = list_principal_tags(kind, name)
+            if tags.get(tag_key) != "true":
+                return (False, "")
+            if str(require_reason).lower() == "true":
+                reason = tags.get(tag_key + "Reason", "")
+                if not reason.strip():
+                    return (False, f"{tag_key}=true tag set but {tag_key}Reason missing or empty (ignored)")
+            return (True, f"{tag_key}=true tag honored")
+
+        def list_inline_policies(kind, name):
+            """Return [(inline_policy_name, parsed_document_dict), ...]."""
+            if kind == "Role":
+                names = iam.list_role_policies(RoleName=name).get("PolicyNames", [])
+                getter = lambda pn: iam.get_role_policy(RoleName=name, PolicyName=pn)
+            elif kind == "User":
+                names = iam.list_user_policies(UserName=name).get("PolicyNames", [])
+                getter = lambda pn: iam.get_user_policy(UserName=name, PolicyName=pn)
+            elif kind == "Group":
+                names = iam.list_group_policies(GroupName=name).get("PolicyNames", [])
+                getter = lambda pn: iam.get_group_policy(GroupName=name, PolicyName=pn)
+            else:
+                return []
+            results = []
+            for pn in names:
+                try:
+                    response = getter(pn)
+                    doc = response.get("PolicyDocument", {})
+                    if isinstance(doc, str):
+                        doc = json.loads(doc)
+                    results.append((pn, doc))
+                except Exception:
+                    continue
+            return results
+
+        def classify_inline_policy(document):
+            if not document:
+                return None
+            statements = document.get("Statement", [])
+            if isinstance(statements, dict):
+                statements = [statements]
+            severities = set()
+            for stmt in statements:
+                pattern = classify_statement(stmt)
+                if pattern is not None:
+                    severities.add(pattern)
+            if "full" in severities:
+                return "full"
+            if "service" in severities:
+                return "service"
+            return None
+
+        def overall_pattern(findings):
+            severities = set(findings.values())
+            if "full" in severities:
+                return "full"
+            if "service" in severities:
+                return "service"
+            return "none"
+
+        def tag_principal(kind, name, findings):
+            tags = [
+                {"Key": "OverpermissivePolicies", "Value": ",".join(sorted(findings.keys()))[:255]},
+                {"Key": "WildcardPattern", "Value": overall_pattern(findings)},
+                {"Key": "WildcardCount", "Value": str(len(findings))},
+                {"Key": "LastEvaluated", "Value": datetime.datetime.now(datetime.timezone.utc).isoformat()},
+            ]
+            if kind == "Role":
+                iam.tag_role(RoleName=name, Tags=tags)
+            elif kind == "User":
+                iam.tag_user(UserName=name, Tags=tags)
+            elif kind == "Group":
+                iam.tag_group(GroupName=name, Tags=tags)
+
+        def script_handler(event, context):
+            resource_id = event.get("ResourceId")
+            action = event.get("Action", "analyze")
+
+            kind, name = find_principal_by_id(resource_id)
+            if kind is None:
+                return {"status": "principal-not-found", "resource_id": resource_id}
+
+            excluded_ids = event.get("ExcludedResourceIds") or []
+            if isinstance(excluded_ids, str):
+                excluded_ids = [excluded_ids] if excluded_ids else []
+
+            excluded, reason = is_excluded(
+                kind,
+                name,
+                excluded_ids,
+                event.get("TagBasedExemptionEnabled", "true"),
+                event.get("ExemptionTagKey", "CrwdRemediatorExempt"),
+                event.get("RequireExemptionReason", "true"),
+            )
+            if excluded:
+                return {"status": "exempted", "principal": f"{kind.lower()}/{name}", "reason": reason}
+
+            if action != "analyze":
+                return {"status": "unsupported-action", "action": action}
+
+            findings = {}
+            for inline_name, doc in list_inline_policies(kind, name):
+                pattern = classify_inline_policy(doc)
+                if pattern is not None:
+                    findings[inline_name] = pattern
+
+            if not findings:
+                return {"status": "no-findings", "principal": f"{kind.lower()}/{name}"}
+
+            tag_principal(kind, name, findings)
+            return {
+                "status": "tagged",
+                "principal": f"{kind.lower()}/{name}",
+                "wildcard_pattern": overall_pattern(findings),
+                "overpermissive_policies": sorted(findings.keys()),
+            }
